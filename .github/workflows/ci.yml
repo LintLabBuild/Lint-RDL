@@ -1,0 +1,37 @@
+name: ci
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: go test -race -count=1 ./...
+      - name: fuzz (short)
+        if: runner.os == 'Linux'
+        run: |
+          go test ./internal/policy -run=^$ -fuzz=FuzzSanitizeFilename -fuzztime=30s
+          go test ./internal/policy -run=^$ -fuzz=FuzzCheckRawURL -fuzztime=30s
+      - name: staticcheck
+        if: runner.os == 'Linux'
+        run: go run honnef.co/go/tools/cmd/staticcheck@2025.1.1 ./...
+      - name: govulncheck
+        if: runner.os == 'Linux'
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+      - name: cross-build
+        if: runner.os == 'Linux'
+        run: |
+          GOOS=windows GOARCH=amd64 go build -trimpath -o /dev/null ./cmd/rdl
+          GOOS=windows GOARCH=arm64 go build -trimpath -o /dev/null ./cmd/rdl
+          GOOS=darwin GOARCH=arm64 go build -trimpath -o /dev/null ./cmd/rdl
