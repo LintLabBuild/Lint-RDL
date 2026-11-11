@@ -70,7 +70,8 @@ That is acceptable because pinning happens at the PC, by the owner. Still:
 
 | Threat | Defence | Test |
 |---|---|---|
-| Ripping streams or DRM content (piracy) | Streaming and DRM sites are refused on every hop, including redirects. The list is built in and can only be extended. | `TestStreamingSitesBlocked` |
+| Stream ripping (rdl is not built for piracy) | Streaming services are refused on every hop, including redirects. The list is built in and can only be extended. The line is "a file the server hands over, which a browser would save", so direct file links on any other site are allowed. | `TestStreamingSitesBlocked` |
+| Saving encrypted MEGA data as if it were the file | MEGA links get a "not supported yet" explanation | `TestStreamingSitesBlocked` |
 | HLS/DASH playlists | Refused by extension in the URL and by `Content-Type` at probe and download time | `TestStreamingSitesBlocked`, `TestStreamPlaylistDownloadRefused`, `TestProbeContents` |
 | A disguised program (`photo.jpg` that is an `.exe`) | `probe` and `get` read the first bytes and warn; the MOTW still applies | `TestSniff`, `TestProbeContents` |
 | ZIP entries with `../` or absolute paths (zip-slip) | `probe` warns. rdl never extracts. | `TestListZipOverHTTP` |

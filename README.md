@@ -66,13 +66,21 @@ folder named after the repository. A "view file" link (`.../blob/main/x`) is
 downloaded as that single raw file, and release and archive links are ordinary
 file downloads. Without Git, rdl says how to get it.
 
-## No piracy, no stream ripping
+## What it downloads (and what it doesn't)
 
-Streaming and DRM sites (YouTube, Netflix, Prime Video, Hotstar, Spotify,
-SoundCloud, Twitch, TikTok, Instagram, Vimeo...) are refused, and so are
-HLS/DASH stream playlists (`.m3u8`, `.mpd`) and client-side encrypted shares
-(MEGA). rdl downloads files that are offered for download, nothing else. The
-built-in list can't be switched off; `blocked_sites` adds more.
+The rule: **if the server hands over a file that a browser would save, rdl can
+download it.** rdl is not built for piracy or stream ripping, so:
+
+- Streaming services (YouTube, Netflix, Prime Video, Hotstar, JioCinema,
+  Spotify, SoundCloud, Twitch, Vimeo...) are refused. They offer playback in
+  their player, not files. This list is built in; `blocked_sites` adds more.
+- Stream playlists (`.m3u8`, `.mpd`) are refused. A player stitches them
+  together from fragments; they aren't files.
+- Web pages are refused as "a web page, not a file" (for example, a login page
+  or a social media post). A direct file link on the same site works.
+- MEGA is **not supported yet**, for technical reasons. Its files are
+  encrypted on the server and decrypted by JavaScript in your browser, so a plain
+  download would only get encrypted data.
 
 ## What it guarantees
 

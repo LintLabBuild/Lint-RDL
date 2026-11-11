@@ -5,24 +5,35 @@ import (
 	"strings"
 )
 
-// StreamingSites are sites whose content is only meant to be streamed or
-// is deliberately hidden behind players, DRM or client-side encryption.
-// rdl refuses them on purpose (no piracy, no stream ripping). They are
-// built in and can't be removed from config; owners can add more with
-// blocked_sites.
+// StreamingSites are video and music streaming services. Their content
+// is offered for playback in their own player, not as a file a browser can
+// save, so rdl (which is not built for stream ripping) refuses them. The
+// list is built in and can't be removed from config; owners can add more
+// with blocked_sites.
+//
+// The rule is: if the server hands over a file that a browser would save,
+// rdl may download it. Social sites are not listed: their pages are HTML
+// (which rdl refuses as "a web page, not a file"), while direct file links
+// on their CDNs are ordinary files.
 var StreamingSites = []string{
-	// video / music streaming
 	"youtube.com", "youtu.be", "youtube-nocookie.com", "googlevideo.com", "youtubekids.com",
-	"vimeo.com", "vimeocdn.com", "dailymotion.com", "dai.ly", "twitch.tv", "ttvnw.net",
-	"tiktok.com", "tiktokcdn.com", "instagram.com", "cdninstagram.com", "facebook.com", "fb.watch",
-	"x.com", "twitter.com", "twimg.com", "reddit.com", "v.redd.it", "bilibili.com",
 	"netflix.com", "nflxvideo.net", "primevideo.com", "amazonvideo.com", "disneyplus.com",
-	"hotstar.com", "hulu.com", "max.com", "hbomax.com", "peacocktv.com", "paramountplus.com",
-	"jiocinema.com", "jiohotstar.com", "sonyliv.com", "zee5.com", "crunchyroll.com", "mxplayer.in",
+	"hotstar.com", "jiohotstar.com", "jiocinema.com", "hulu.com", "max.com", "hbomax.com",
+	"peacocktv.com", "paramountplus.com", "sonyliv.com", "zee5.com", "crunchyroll.com", "mxplayer.in",
+	"twitch.tv", "ttvnw.net", "vimeo.com", "vimeocdn.com", "dailymotion.com", "dai.ly",
 	"spotify.com", "scdn.co", "soundcloud.com", "sndcdn.com", "music.apple.com", "tidal.com",
 	"deezer.com", "gaana.com", "jiosaavn.com", "wynk.in", "audible.com",
-	// content hidden behind client-side encryption
-	"mega.nz", "mega.io", "mega.co.nz",
+}
+
+// UnsupportedSites serve files that are encrypted on the server and only
+// decrypted by the site's own JavaScript in the browser. A plain HTTP
+// download can't get the real file, so rdl explains that instead of
+// saving an HTML page or encrypted data. This is a technical limit, not
+// a policy one.
+var UnsupportedSites = map[string]string{
+	"mega.nz":    "MEGA",
+	"mega.io":    "MEGA",
+	"mega.co.nz": "MEGA",
 }
 
 // StreamManifestTypes are playlist formats that hide a video as many
@@ -46,10 +57,15 @@ func hostMatches(host string, domains []string) (string, bool) {
 	return "", false
 }
 
-// CheckSite refuses streaming and content-hiding sites.
+// CheckSite refuses streaming services and explains unsupported sites.
 func (p *URLPolicy) CheckSite(host string) error {
 	if d, ok := hostMatches(host, StreamingSites); ok {
-		return blocked("%s is a streaming site; rdl only downloads files that are offered for download (no stream ripping)", d)
+		return blocked("%s is a streaming service: its videos/music are offered for playback, not as files, and rdl is not built for stream ripping", d)
+	}
+	for d, name := range UnsupportedSites {
+		if _, ok := hostMatches(host, []string{d}); ok {
+			return blocked("%s links are not supported yet: %s encrypts files on its server and only your browser can decrypt them, so a plain download would give you an unusable file. Use %s's own app or the browser for now", name, name, name)
+		}
 	}
 	if d, ok := hostMatches(host, p.BlockedSites); ok {
 		return blocked("%s is blocked by config (blocked_sites)", d)
@@ -72,4 +88,4 @@ func IsStreamManifest(contentType, name string) bool {
 }
 
 // ErrStreamManifest explains why a playlist is refused.
-const ErrStreamManifest = "this link is a streaming playlist (HLS/DASH), not a file; rdl doesn't download or stitch streams"
+const ErrStreamManifest = "this link is a streaming playlist (HLS/DASH) that a player stitches together, not a file; rdl doesn't download streams"

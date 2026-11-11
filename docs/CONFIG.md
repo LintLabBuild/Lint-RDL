@@ -21,7 +21,7 @@ remote interface can change it.
 | `block_extensions` | `warn` | `off` / `warn` / `block` for executable types (`.exe`, `.msi`, `.ps1`, `.lnk`, ...) |
 | `allow_private` | `[]` | Private IPs or CIDRs allowed as download sources |
 | `domain_allowlist` | `[]` | If non-empty, only these domains (and their subdomains) |
-| `blocked_sites` | `[]` | Extra sites to refuse. Streaming and DRM sites are always refused (`policy.StreamingSites`). |
+| `blocked_sites` | `[]` | Extra sites to refuse. Streaming services are always refused (`policy.StreamingSites`). |
 | `favorite_folders` | `true` | Offer folders pinned in Windows File Explorer Quick access, or in GTK (GNOME Files, Nautilus, Nemo, Thunar) or KDE (Dolphin) bookmarks, as save folders. Drive roots, the home folder and its parents, hidden folders and system folders are skipped. |
 | `git_hosts` | `[github.com, gitlab.com, codeberg.org, bitbucket.org, git.sr.ht, gitea.com]` | Hosts whose repository links are cloned with Git |
 | `git_full_history` | `false` | `false`: shallow clone (latest commit). `true`: full history. |

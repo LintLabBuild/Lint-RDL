@@ -254,7 +254,7 @@ func TestStreamingSitesBlocked(t *testing.T) {
 	for _, u := range []string{
 		"https://www.youtube.com/watch?v=abc", "https://youtu.be/abc", "https://rr3---sn-abc.googlevideo.com/videoplayback",
 		"https://m.youtube.com/shorts/x", "https://music.youtube.com/watch?v=1", "https://open.spotify.com/track/1",
-		"https://www.netflix.com/title/1", "https://mega.nz/file/abc#key", "https://vimeo.com/123",
+		"https://www.netflix.com/title/1", "https://vimeo.com/123",
 		"https://cdn.example.com/video/master.m3u8", "https://cdn.example.com/stream.MPD?x=1",
 		"https://sub.example-tube.com/x.mp4",
 	} {
@@ -262,7 +262,13 @@ func TestStreamingSitesBlocked(t *testing.T) {
 			t.Errorf("%s should be blocked, got %v", u, err)
 		}
 	}
-	for _, u := range []string{"https://notyoutube.com/x.zip", "https://github.com/a/b/releases/download/v1/x.zip", "https://example.com/video.mp4"} {
+	// MEGA is not a policy block but a technical one, with its own message.
+	if _, err := p.CheckRawURL("https://mega.nz/file/abc#key"); err == nil || !strings.Contains(err.Error(), "not supported yet") {
+		t.Errorf("mega: %v", err)
+	}
+	// Direct file links on social/CDN hosts are ordinary files.
+	for _, u := range []string{"https://notyoutube.com/x.zip", "https://github.com/a/b/releases/download/v1/x.zip", "https://example.com/video.mp4",
+		"https://pbs.twimg.com/media/abc.jpg", "https://i.redd.it/x.png", "https://www.dropbox.com/s/abc/file.zip?dl=1"} {
 		if _, err := p.CheckRawURL(u); err != nil {
 			t.Errorf("%s: %v", u, err)
 		}

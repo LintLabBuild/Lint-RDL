@@ -35,7 +35,9 @@ The folder must already exist; create it with `rdl mkdir`.
 | A web folder ("Index of /...") | `probe` lists the files. `get --all` / `add --all` downloads every file in it (not subfolders). |
 | A Git repository (`https://github.com/owner/repo`, `/tree/<branch>`, GitLab, Codeberg, Bitbucket, sourcehut, Gitea) | Cloned with your Git if it's installed (the latest commit by default; `git_full_history: true` gets the full history). An interrupted clone starts over. |
 | A "view file" link (`github.com/o/r/blob/main/x`, GitLab `/-/blob/`, Codeberg `/src/`) | Turned into the raw file link and downloaded as a file |
-| Streaming sites, `.m3u8` / `.mpd` playlists, MEGA | Refused |
+| Streaming services, `.m3u8` / `.mpd` playlists | Refused (playback content, not files) |
+| A web page (login page, social post, player page) | Refused as "a web page, not a file"; use the direct file link |
+| MEGA | Not supported yet: files are encrypted on the server and only decrypted in the browser |
 
 Exit codes: `0` everything done, `1` a job failed or there was an error, `2` usage
 error, `130` interrupted.
