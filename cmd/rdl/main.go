@@ -41,7 +41,10 @@ Downloads:
                                         Hugging Face: look up size + SHA-256, then queue
   rdl run [--exit-when-done]            process the queue in this window
   rdl list | status <id> | wait [<id>...] [--timeout 30m]
-  rdl pause|resume|cancel|retry|remove|verify <id>
+  rdl pause|resume|cancel|remove|verify <id>
+  rdl retry <id> [--resume-mode ratchet|missing-only|restart]
+  rdl relink <id> <new-url> [--sha256 h] [--resume-mode m]
+                                        continue a job from a new link (expired temporary links)
 
 Folders:
   rdl folders | ls [path] | mkdir <name> [--in folder] | disk
@@ -57,6 +60,7 @@ At the PC only (config):
 
 Flags for get/add: --to <folder|@favorite>  --name <file>  --sha256 <hash>  --dup copy
                    --all (web folders: every file)  -y (don't ask)  --json
+                   --resume-mode auto|ratchet|missing-only|restart (server can't resume)
 
 rdl get shows what a link is (type, size, files inside) and, in a terminal,
 asks where to save it (configured folders and folders pinned in File Explorer /
@@ -102,7 +106,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		err = cmdRun(rest, stdout, stderr)
 	case "list", "ls-jobs":
 		err = cmdJobs(rest, stdout)
-	case "status", "pause", "resume", "cancel", "retry", "verify", "whoami", "folders", "ls", "mkdir", "disk":
+	case "status", "pause", "resume", "cancel", "retry", "relink", "verify", "whoami", "folders", "ls", "mkdir", "disk":
 		err = cmdDispatch(cmd, rest, stdout)
 	case "remove":
 		err = cmdRemove(rest, stdout)
@@ -382,8 +386,8 @@ func cmdProbe(args []string, w io.Writer) error {
 }
 
 type addFlags struct {
-	to, name, sha, dup *string
-	asJSON, all, yes   *bool
+	to, name, sha, dup, rmode *string
+	asJSON, all, yes          *bool
 }
 
 func newAddFlags(name string) (*flag.FlagSet, addFlags) {
@@ -393,6 +397,7 @@ func newAddFlags(name string) (*flag.FlagSet, addFlags) {
 		name:   fs.String("name", "", ""),
 		sha:    fs.String("sha256", "", ""),
 		dup:    fs.String("dup", "", ""),
+		rmode:  fs.String("resume-mode", "", ""),
 		asJSON: fs.Bool("json", false, ""),
 		all:    fs.Bool("all", false, ""),
 		yes:    fs.Bool("y", false, ""),
@@ -431,7 +436,7 @@ func cmdAdd(args []string, w io.Writer) error {
 	var jobs []*state.Job
 	for _, u := range pos {
 		job, err := a.m.Add(engine.AddRequest{URL: u, Dir: *f.to, Name: *f.name, SHA256: *f.sha,
-			AllowDuplicate: *f.dup == "copy", Owner: a.me.ID, Via: "cli"})
+			AllowDuplicate: *f.dup == "copy", Owner: a.me.ID, Via: "cli", ResumeMode: *f.rmode})
 		if err != nil {
 			return fmt.Errorf("%s: %w", u, err)
 		}
@@ -579,7 +584,7 @@ func cmdGet(args []string, w, ew io.Writer) error {
 			sha = p.sha
 		}
 		job, err := a.m.Add(engine.AddRequest{URL: u, Dir: dir, Name: *f.name, SHA256: sha, ExpectedSize: p.size,
-			AllowDuplicate: *f.dup == "copy", Owner: a.me.ID, Via: "cli"})
+			AllowDuplicate: *f.dup == "copy", Owner: a.me.ID, Via: "cli", ResumeMode: *f.rmode})
 		if errors.Is(err, engine.ErrDuplicate) {
 			// Same URL already known: resume that job instead.
 			if nu, perr := a.urls.CheckRawURL(u); perr == nil {
@@ -778,11 +783,13 @@ func cmdDispatch(name string, args []string, w io.Writer) error {
 	fs := newFlags(name)
 	asJSON := fs.Bool("json", false, "")
 	in := fs.String("in", "", "")
+	rmode := fs.String("resume-mode", "", "")
+	sha := fs.String("sha256", "", "")
 	pos, err := parseInterspersed(fs, args)
 	if err != nil {
 		return err
 	}
-	mutating := name == "pause" || name == "resume" || name == "cancel" || name == "retry"
+	mutating := name == "pause" || name == "resume" || name == "cancel" || name == "retry" || name == "relink"
 	a, err := openApp(mutating)
 	if err != nil {
 		return err
@@ -793,6 +800,12 @@ func cmdDispatch(name string, args []string, w io.Writer) error {
 	flags := map[string]string{}
 	if *in != "" {
 		flags["in"] = *in
+	}
+	if *rmode != "" {
+		flags["resume-mode"] = *rmode
+	}
+	if *sha != "" {
+		flags["sha256"] = *sha
 	}
 	res := a.disp.Dispatch(ctx, command.Command{Name: name, Args: pos, Flags: flags, Identity: a.me})
 	if *asJSON {
@@ -960,6 +973,10 @@ func (p *progress) draw(views []engine.JobView) {
 		}
 		switch v.State {
 		case state.StateRunning:
+			if v.CatchingUp > 0 {
+				s += " verifying saved part " + policy.HumanBytes(v.CatchingUp) + "/" + policy.HumanBytes(v.Downloaded)
+				break
+			}
 			s += " " + policy.HumanBytes(int64(v.Speed)) + "/s"
 			if v.ETA > 0 {
 				s += " ETA " + (time.Duration(v.ETA) * time.Second).Round(time.Second).String()

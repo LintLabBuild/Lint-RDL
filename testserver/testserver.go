@@ -36,6 +36,10 @@ type Options struct {
 	Disposition       string
 	ContentType       string // default application/octet-stream
 	Status            int    // force this status for every GET (e.g. 404)
+	// PerRequest, if set, decides per GET (numbered from 1) whether the
+	// server ignores ranges (like a CDN edge without range support) and
+	// after how many body bytes the connection is cut (0 = never).
+	PerRequest func(n int) (ignoreRange bool, cut int64)
 }
 
 // Server serves one file at /file.bin (and friends).
@@ -154,6 +158,9 @@ func (s *Server) serveFileTok(w http.ResponseWriter, r *http.Request, tok string
 		}
 	}
 	gets := s.gets
+	if o.PerRequest != nil && r.Method == http.MethodGet {
+		o.IgnoreRange, o.CutEvery = o.PerRequest(gets)
+	}
 	content := s.content
 	etag := s.etag()
 	s.Log = append(s.Log, fmt.Sprintf("%s range=%q if-range=%q", r.Method, r.Header.Get("Range"), r.Header.Get("If-Range")))

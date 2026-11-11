@@ -17,6 +17,8 @@ MCP (see [SPEC.md §4](SPEC.md#4-the-shared-command-set)).
 | `rdl wait [<id>...] [--timeout 30m]` | Runs the queue and blocks until the jobs settle, then prints one summary line |
 | `rdl pause|resume|cancel|retry <id>` | Job control (while no other rdl is running; live control arrives with the daemon) |
 | `rdl verify <id>` | Recomputes the SHA-256 of the finished file |
+| `rdl retry <id> [--resume-mode m]` | Tries a failed job again, optionally with another resume mode |
+| `rdl relink <id> <new-url> [--sha256 h] [--resume-mode m]` | Continues a job from a new link to the same file, e.g. when a temporary link expired. The part already saved is kept. |
 | `rdl remove <id>` | Forgets a finished, failed or cancelled job (the file stays) |
 
 `--to` takes:
@@ -41,6 +43,33 @@ The folder must already exist; create it with `rdl mkdir`.
 
 Exit codes: `0` everything done, `1` a job failed or there was an error, `2` usage
 error, `130` interrupted.
+
+## When the server can't resume
+
+Most servers can continue a download where it stopped. Some always send the
+file from the start. `resume_mode` (config) or `--resume-mode` (per job)
+decides what rdl does then:
+
+| Mode | What happens | Good for |
+|---|---|---|
+| `auto` (default) | Same as `ratchet` | |
+| `ratchet` | Keeps the part already saved. The server re-sends it; rdl reads it **without writing it again**, checks its SHA-256 matches, and continues after it. If it doesn't match, the file changed: restart. Verified bytes are never thrown away, so any later attempt that reaches a server or CDN edge that *can* resume, or a new link (`relink`), continues from the best point. | Unlimited connections |
+| `missing-only` | Never downloads the same bytes twice. If the server can't resume, the job stops with the partial file kept. Continue with `rdl relink` (a link that can resume) or `rdl retry <id> --resume-mode ratchet`. | Metered data plans |
+| `restart` | All or nothing: wipe the partial file and start again. | Old behaviour |
+
+Note: on a server that can never resume, each attempt still has to get from
+the start to the end in one go. The modes decide what is kept and what it
+costs, not how often that happens.
+
+### Expired links
+
+Temporary links (signed URLs, expiring shares) can stop working mid-download.
+rdl then says the file is no longer at the link, keeps the partial file, and
+suggests `rdl relink <id> <new-url>`:
+- With a known SHA-256 (`--sha256`, Hugging Face, a manifest), the new link
+  only sends the missing bytes, and the final hash proves it was the same file.
+- Without one, rdl first checks the saved part against the new link
+  (`--resume-mode ratchet` costs that part's bandwidth once).
 
 ## Folders
 
