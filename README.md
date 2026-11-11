@@ -1,144 +1,101 @@
-# rdl: resumable download manager
+# rdl
 
-Downloads that survive network drops, crashes and shutdowns. You will be able to
-control it from chat, a browser or an AI agent. It never runs, opens or sends out
-what it downloads.
+**A download manager for people who outgrew theirs.**
 
-> **Status: Phase 1 (core) is built.** The engine, `probe`, the URL and path
-> policies, the disk guard, the journal, Mark of the Web, the CLI, the test server
-> and the test suite are done. The background daemon, web UI, Telegram, MCP and
-> power actions are later phases (see [Roadmap](#roadmap)). The full design is in
-> [`docs/SPEC.md`](docs/SPEC.md).
+Downloads that survive network drops, crashes and reboots, check themselves
+when they finish, and can be started from the terminal, a browser, your phone
+or an AI agent. Built for Windows and Linux.
 
-## Why
+---
 
-On a train, I wanted my home PC to download about 30 GB of AI models. An AI agent
-did it, but most of its effort went into babysitting: restarting a script after
-network drops, checking sizes and polling progress. With rdl the same job takes
-3 to 5 commands (probe, add, wait, verify), and it works from Telegram or a
-browser without any AI.
+## Why it exists
+
+I'm a power user. Every download manager I tried was missing something I
+needed: resume that actually works, a checksum check, remote control, or
+handling for Git and Hugging Face links.
+
+The breaking point was a train ride. I wanted my home PC to fetch about 30 GB of
+AI models. Nothing I had could do that from my phone, so I asked an AI agent.
+It worked, but the agent spent most of its effort babysitting: restarting
+scripts after drops, checking file sizes, polling progress.
+
+rdl is the tool I wanted instead: **one download manager that replaces the
+rest**, and that I can trust with a 30 GB file on a bad connection.
+
+## What you get
+
+| | |
+|---|---|
+| **Resume that never corrupts** | Survives Wi-Fi drops, power cuts and reboots. Resumes only when the server proves the file is unchanged; otherwise it restarts and tells you why. |
+| **Knows what a link is before downloading** | The real file type, the size, whether resume will work, and what's inside: ZIP contents, model tensors, web-folder files, repository files. It warns about a `.jpg` that is really a program. |
+| **Verified files** | Checks the SHA-256 automatically (Hugging Face hashes are looked up for you). |
+| **Saves where you want** | Your save folders plus the folders you pinned in **File Explorer** or your **Linux file manager**. |
+| **Git links** | Paste a GitHub, GitLab or Codeberg repository link: it's cloned with your Git, if installed. |
+| **Hugging Face helper** | `rdl hf <repo> <files>` fetches models with sizes and hashes. |
+| **Safe by default** | Never runs what it downloads. Never fetches from your private network. Never writes outside your chosen folders. |
+| **Same on Windows and Linux** | One small binary with no dependencies. Keeps the PC awake while downloading. |
 
 ## Quick start
 
 ```sh
-rdl setup                                   # creates config, uses ~/Downloads (or %USERPROFILE%\Downloads) as the save folder
-rdl probe https://huggingface.co/.../model.safetensors
-rdl get   https://huggingface.co/.../model.safetensors --to models/vae
+rdl setup                          # creates the config, uses your Downloads folder
+rdl probe <url>                    # what is this link?
+rdl get <url>                      # show it, pick a folder, download
 ```
 
-Kill it, pull the network cable or reboot, then run the same `rdl get` again. It
-picks up where it stopped and checks the SHA-256 at the end.
-
-To queue jobs and run them separately:
+Interrupted? Run the same `rdl get` again and it carries on where it stopped.
 
 ```sh
-rdl add <url> --to models --sha256 <hash>
+rdl get https://github.com/comfyanonymous/ComfyUI               # clone a repository
+rdl get https://example.com/files/ --all --to "@AI Models"      # every file in a web folder
 rdl hf Comfy-Org/Wan_2.2_ComfyUI_Repackaged split_files/vae/wan2.2_vae.safetensors --to models/vae
-rdl run --exit-when-done
+rdl add <url> && rdl run           # queue now, download later
 ```
 
-## What it tells you first
+All commands: [docs/USAGE.md](docs/USAGE.md)
 
-`rdl probe <url>` (and `rdl get`, before it starts) shows what a link really is:
+## What it downloads
 
-- **The real file type**, read from the first bytes, not from the name. A
-  `.jpg` that is really a program gets a warning.
-- **What is inside**, like a torrent client would show:
-  - the files in a ZIP (read from the archive's directory with a few small
-    range requests, without downloading it);
-  - the tensor count, parameters and dtypes of a `.safetensors` model;
-  - the files and subfolders of a web folder ("Index of /...", downloaded
-    with `--all`);
-  - the file list of a GitHub repository.
-- Size, whether resume will work, the checksum, and the file name.
+**If a browser would save it as a file, rdl can download it.** rdl is not built
+for piracy:
 
-In a terminal, `rdl get` then asks where to save. It offers your save folders
-**and the folders you pinned in Windows File Explorer (Quick access) or in your
-Linux file manager (GNOME Files, Nautilus, Nemo, Thunar, Dolphin)**. System
-folders, drive roots, your home folder itself and hidden folders are never
-offered.
+- **Streaming services** (YouTube, Netflix, Spotify, Hotstar...) and stream
+  playlists (`.m3u8`, `.mpd`) are refused. They offer playback, not files.
+- **Web pages** (login pages, social posts) are refused as "not a file". Use the
+  direct file link.
+- **MEGA** is not supported yet: its files are encrypted on the server and only
+  your browser can decrypt them.
 
-## Git repositories
+## Roadmap
 
-If Git is installed, a repository link such as
-`https://github.com/comfyanonymous/ComfyUI` is cloned with your Git, into a
-folder named after the repository. A "view file" link (`.../blob/main/x`) is
-downloaded as that single raw file, and release and archive links are ordinary
-file downloads. Without Git, rdl says how to get it.
-
-## What it downloads (and what it doesn't)
-
-The rule: **if the server hands over a file that a browser would save, rdl can
-download it.** rdl is not built for piracy or stream ripping, so:
-
-- Streaming services (YouTube, Netflix, Prime Video, Hotstar, JioCinema,
-  Spotify, SoundCloud, Twitch, Vimeo...) are refused. They offer playback in
-  their player, not files. This list is built in; `blocked_sites` adds more.
-- Stream playlists (`.m3u8`, `.mpd`) are refused. A player stitches them
-  together from fragments; they aren't files.
-- Web pages are refused as "a web page, not a file" (for example, a login page
-  or a social media post). A direct file link on the same site works.
-- MEGA is **not supported yet**, for technical reasons. Its files are
-  encrypted on the server and decrypted by JavaScript in your browser, so a plain
-  download would only get encrypted data.
-
-## What it guarantees
-
-- **Resume or restart, never corrupt.** Data is fsynced and journaled every 8 MB,
-  together with the SHA-256 state. rdl only treats a resume as valid if the server
-  answers `206` with a matching `Content-Range` and the ETag (or Last-Modified)
-  hasn't changed. Anything else restarts from zero, with a notice saying why.
-- **Public internet only.** Private, loopback, link-local, CGNAT and metadata
-  addresses are blocked in every spelling (`2130706433`, `0x7f.1`,
-  `::ffff:127.0.0.1`, NAT64...). The check runs on the actual socket address, so
-  DNS rebinding doesn't get past it, and it runs again on every redirect hop.
-- **Writes only inside your save folders.** Symlinks and junctions are resolved
-  first, the folder is checked again right before the final rename, and file
-  names are cleaned (no `..`, no `:`, no reserved names, no bidi tricks). An
-  existing file is never overwritten.
-- **Never executes anything it downloads.** On Windows, every finished file
-  gets the Mark of the Web. The only programs rdl starts are your installed Git
-  (for repository links), PowerShell (to read Explorer's pinned folders) and
-  `systemd-inhibit` / `caffeinate` (to keep the PC awake), each with fixed
-  arguments.
-
-Works the same on **Windows and Linux** (macOS builds too).
-
-How each threat is blocked, and which test proves it: [`docs/THREATS.md`](docs/THREATS.md).
+| | Status |
+|---|---|
+| Core: engine, probe, CLI, safety policies, Git, favorites, inspection | ✅ done |
+| Background service, web UI, phone access over Tailscale, sleep/shutdown when done | next |
+| Browser extension: send downloads from Chrome, Edge or Firefox to rdl | [#1](https://github.com/LintLabBuild/Lint-RDL/issues/1) |
+| Faster downloads: parallel connections, Wi-Fi + Ethernet + hotspot together, mirrors | [#2](https://github.com/LintLabBuild/Lint-RDL/issues/2) |
+| Telegram bot, AI agent tools (MCP), more chat apps | planned |
 
 ## Build
 
-Requires Go 1.24+. No third-party dependencies.
+Go 1.24+, standard library only.
 
 ```sh
-go build -trimpath -o rdl ./cmd/rdl            # Linux
-GOOS=windows go build -trimpath -o rdl.exe ./cmd/rdl
+go build -trimpath -o rdl ./cmd/rdl                              # Linux
+GOOS=windows go build -trimpath -o rdl.exe ./cmd/rdl             # Windows
 go test -race ./...
 ```
 
 ## Docs
 
-| | |
-|---|---|
-| [INSTALL](docs/INSTALL.md) | Build, setup, autostart, uninstall |
-| [USAGE](docs/USAGE.md) | Every command |
-| [CONFIG](docs/CONFIG.md) | Every config key |
-| [THREATS](docs/THREATS.md) | Threat model, with the test for each threat |
-| [SECURITY](docs/SECURITY.md) | Reporting vulnerabilities |
-| [TUNNELS](docs/TUNNELS.md) | Remote access (phase 2) |
-| [ADAPTERS](docs/ADAPTERS.md) | Writing an adapter |
-| [SPEC](docs/SPEC.md) | Full design spec |
-
-## Roadmap
-
-| Phase | Scope | State |
-|---|---|---|
-| 1. Core | Engine, probe, get/add/run, journal, URL/path policy, disk guard, MOTW, CLI, test server, tests | **done** |
-| 2. Daemon + web UI | Background daemon, autostart, power actions, web UI with login | next |
-| 3. Telegram | Pairing, folder picker, progress edits | |
-| 4. MCP | `rdl mcp` with `wait` | |
-| 5. More adapters | Discord, Slack, Matrix, WhatsApp Cloud API | |
-| 6. Extras | Release builds, ESP8266 `/wake`, Linux service | |
+[Install](docs/INSTALL.md) ·
+[Usage](docs/USAGE.md) ·
+[Config](docs/CONFIG.md) ·
+[Security model](docs/THREATS.md) ·
+[Reporting vulnerabilities](docs/SECURITY.md) ·
+[Remote access](docs/TUNNELS.md) ·
+[Writing adapters](docs/ADAPTERS.md) ·
+[Full design spec](docs/SPEC.md)
 
 ## License
 
