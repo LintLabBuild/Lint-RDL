@@ -21,7 +21,7 @@ browser without any AI.
 ## Quick start
 
 ```sh
-rdl setup                                   # creates config, uses ~/Downloads as the save folder
+rdl setup                                   # creates config, uses ~/Downloads (or %USERPROFILE%\Downloads) as the save folder
 rdl probe https://huggingface.co/.../model.safetensors
 rdl get   https://huggingface.co/.../model.safetensors --to models/vae
 ```
@@ -37,6 +37,43 @@ rdl hf Comfy-Org/Wan_2.2_ComfyUI_Repackaged split_files/vae/wan2.2_vae.safetenso
 rdl run --exit-when-done
 ```
 
+## What it tells you first
+
+`rdl probe <url>` (and `rdl get`, before it starts) shows what a link really is:
+
+- **The real file type**, read from the first bytes, not from the name. A
+  `.jpg` that is really a program gets a warning.
+- **What is inside**, like a torrent client would show:
+  - the files in a ZIP (read from the archive's directory with a few small
+    range requests, without downloading it);
+  - the tensor count, parameters and dtypes of a `.safetensors` model;
+  - the files and subfolders of a web folder ("Index of /...", downloaded
+    with `--all`);
+  - the file list of a GitHub repository.
+- Size, whether resume will work, the checksum, and the file name.
+
+In a terminal, `rdl get` then asks where to save. It offers your save folders
+**and the folders you pinned in Windows File Explorer (Quick access) or in your
+Linux file manager (GNOME Files, Nautilus, Nemo, Thunar, Dolphin)**. System
+folders, drive roots, your home folder itself and hidden folders are never
+offered.
+
+## Git repositories
+
+If Git is installed, a repository link such as
+`https://github.com/comfyanonymous/ComfyUI` is cloned with your Git, into a
+folder named after the repository. A "view file" link (`.../blob/main/x`) is
+downloaded as that single raw file, and release and archive links are ordinary
+file downloads. Without Git, rdl says how to get it.
+
+## No piracy, no stream ripping
+
+Streaming and DRM sites (YouTube, Netflix, Prime Video, Hotstar, Spotify,
+SoundCloud, Twitch, TikTok, Instagram, Vimeo...) are refused, and so are
+HLS/DASH stream playlists (`.m3u8`, `.mpd`) and client-side encrypted shares
+(MEGA). rdl downloads files that are offered for download, nothing else. The
+built-in list can't be switched off; `blocked_sites` adds more.
+
 ## What it guarantees
 
 - **Resume or restart, never corrupt.** Data is fsynced and journaled every 8 MB,
@@ -51,8 +88,13 @@ rdl run --exit-when-done
   first, the folder is checked again right before the final rename, and file
   names are cleaned (no `..`, no `:`, no reserved names, no bidi tricks). An
   existing file is never overwritten.
-- **Never executes anything.** On Windows, every finished file gets the Mark of
-  the Web.
+- **Never executes anything it downloads.** On Windows, every finished file
+  gets the Mark of the Web. The only programs rdl starts are your installed Git
+  (for repository links), PowerShell (to read Explorer's pinned folders) and
+  `systemd-inhibit` / `caffeinate` (to keep the PC awake), each with fixed
+  arguments.
+
+Works the same on **Windows and Linux** (macOS builds too).
 
 How each threat is blocked, and which test proves it: [`docs/THREATS.md`](docs/THREATS.md).
 

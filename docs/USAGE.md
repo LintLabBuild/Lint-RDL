@@ -7,8 +7,8 @@ MCP (see [SPEC.md §4](SPEC.md#4-the-shared-command-set)).
 
 | Command | What it does |
 |---|---|
-| `rdl probe <url> [--json]` | Shows the final URL, redirects, size, resumability (from a real 1-byte range test), ETag/Last-Modified, a known SHA-256, the file name and a verdict |
-| `rdl get <url>... [--to dir] [--name file] [--sha256 hash] [--dup copy] [--json]` | Downloads now in this window. Ctrl+C, a crash or a reboot are fine: run the same command again and it resumes. |
+| `rdl probe <url> [--json]` | Shows what the link is without downloading: the real type (from the first bytes), size, resumability (from a real 1-byte range test), ETag/Last-Modified, a known SHA-256, the file name, **what is inside** (ZIP file list, safetensors summary, web folder files, GitHub repository files), warnings, and a verdict |
+| `rdl get <url>... [--to dir] [--name file] [--sha256 hash] [--dup copy] [--all] [-y] [--json]` | Shows the probe first. In a terminal it then asks where to save (save folders and pinned favorites) and asks for confirmation (`-y` skips both). Then it downloads in this window. Ctrl+C, a crash or a reboot are fine: run the same command again and it resumes. |
 | `rdl add <url>... [same flags]` | Queues jobs without starting them |
 | `rdl add-batch manifest.json` | Queues many. The manifest is `[{"url": "...", "to": "models/vae", "name": "...", "sha256": "...", "size": 123}]` |
 | `rdl hf <owner/repo> <path>... [--rev <commit>] [--to dir] [--get]` | Looks up the size and SHA-256 from the Hugging Face API, then queues (or, with `--get`, downloads now). Gated models: set `RDL_HF_TOKEN`. |
@@ -19,8 +19,23 @@ MCP (see [SPEC.md §4](SPEC.md#4-the-shared-command-set)).
 | `rdl verify <id>` | Recomputes the SHA-256 of the finished file |
 | `rdl remove <id>` | Forgets a finished, failed or cancelled job (the file stays) |
 
-`--to` takes an absolute folder inside a save folder, or a path relative to the
-default save folder. The folder must already exist; create it with `rdl mkdir`.
+`--to` takes:
+- an absolute folder inside a save folder or a pinned favorite;
+- a path relative to the default save folder (`models/vae`);
+- `@Label/sub/folder`, where Label is a save folder or favorite as shown by
+  `rdl folders` (e.g. `--to "@AI Models/vae"`).
+
+The folder must already exist; create it with `rdl mkdir`.
+
+### Kinds of links
+
+| Link | What happens |
+|---|---|
+| A file (`.../model.safetensors`, release assets, `raw.githubusercontent.com`) | Resumable download with a checksum check |
+| A web folder ("Index of /...") | `probe` lists the files. `get --all` / `add --all` downloads every file in it (not subfolders). |
+| A Git repository (`https://github.com/owner/repo`, `/tree/<branch>`, GitLab, Codeberg, Bitbucket, sourcehut, Gitea) | Cloned with your Git if it's installed (the latest commit by default; `git_full_history: true` gets the full history). An interrupted clone starts over. |
+| A "view file" link (`github.com/o/r/blob/main/x`, GitLab `/-/blob/`, Codeberg `/src/`) | Turned into the raw file link and downloaded as a file |
+| Streaming sites, `.m3u8` / `.mpd` playlists, MEGA | Refused |
 
 Exit codes: `0` everything done, `1` a job failed or there was an error, `2` usage
 error, `130` interrupted.
@@ -29,7 +44,7 @@ error, `130` interrupted.
 
 | Command | |
 |---|---|
-| `rdl folders` | Lists the save folders |
+| `rdl folders` | Lists the save folders and the pinned favorites that can be used |
 | `rdl ls [path]` | Lists folders (and files) inside a save folder |
 | `rdl mkdir <name> [--in path]` | Creates a folder inside a save folder |
 | `rdl disk` | Shows free space per save folder |

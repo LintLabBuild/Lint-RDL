@@ -75,6 +75,9 @@ type URLPolicy struct {
 	// DomainAllowlist, if non-empty, restricts downloads to these domains
 	// and their subdomains.
 	DomainAllowlist []string
+	// BlockedSites are extra domains the owner refuses (on top of the
+	// built-in StreamingSites).
+	BlockedSites []string
 	// Proxy, if set, is used for all requests. When a proxy is used the
 	// socket-level IP check sees the proxy, so rdl additionally resolves and
 	// checks the target host itself before every request.
@@ -281,6 +284,12 @@ func (p *URLPolicy) CheckURL(u *url.URL) error {
 				return err
 			}
 		}
+	}
+	if err := p.CheckSite(host); err != nil {
+		return err
+	}
+	if HasBlockedExtension(u.Path, StreamManifestExts) {
+		return blocked(ErrStreamManifest)
 	}
 	if len(p.DomainAllowlist) > 0 && !p.domainAllowed(host) {
 		return blocked("domain %q is not in the allowlist", host)

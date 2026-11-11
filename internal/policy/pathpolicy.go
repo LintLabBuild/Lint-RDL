@@ -10,6 +10,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+
+	"github.com/lintlabbuild/lint-rdl/internal/favorites"
 )
 
 // ErrPathBlocked is wrapped by every path policy rejection.
@@ -36,6 +39,113 @@ type PathPolicy struct {
 	// MaxDepth limits how deep below a root mkdir may create folders.
 	// Zero means 8.
 	MaxDepth int
+	// Favorites, if set, returns folders pinned in the file manager
+	// (Explorer Quick access, GTK/KDE bookmarks). Valid ones become extra
+	// save folders. It is called at most once per PathPolicy.
+	Favorites func() []favorites.Folder
+	// Home is the user's home folder (default os.UserHomeDir). Favorites
+	// may not be the home folder or one of its parents.
+	Home string
+
+	favOnce sync.Once
+	favs    []SaveFolder
+}
+
+// SaveFolder is one place a download may be saved: a configured root or a
+// pinned favorite that passed the safety checks.
+type SaveFolder struct {
+	Path   string `json:"path"`
+	Label  string `json:"label"`
+	Source string `json:"source"` // root | explorer | gtk | kde
+}
+
+// isVolumeRoot reports C:\, D:\, / and \\server\share.
+func isVolumeRoot(p string) bool {
+	return filepath.Dir(p) == p || filepath.VolumeName(p)+string(filepath.Separator) == p
+}
+
+// hasHiddenComponent reports a path component starting with '.'.
+func hasHiddenComponent(rel string) bool {
+	for _, c := range strings.Split(rel, string(filepath.Separator)) {
+		if strings.HasPrefix(c, ".") && c != "." && c != ".." {
+			return true
+		}
+	}
+	return false
+}
+
+// validFavorites returns the pinned folders that may be used as save
+// folders. A favorite is rejected if it is a drive root, the home folder or
+// a parent of it, hidden, or inside a forbidden or denied folder.
+func (p *PathPolicy) validFavorites() []SaveFolder {
+	p.favOnce.Do(func() {
+		if p.Favorites == nil {
+			return
+		}
+		home := p.Home
+		if home == "" {
+			home, _ = os.UserHomeDir()
+		}
+		if home != "" {
+			if h, err := RealPath(home); err == nil {
+				home = h
+			}
+		}
+		for _, f := range p.Favorites() {
+			if !filepath.IsAbs(f.Path) {
+				continue
+			}
+			real, err := RealPath(f.Path)
+			if err != nil {
+				continue
+			}
+			if st, err := os.Stat(real); err != nil || !st.IsDir() {
+				continue
+			}
+			if isVolumeRoot(real) || (home != "" && IsWithin(real, home)) || hasHiddenComponent(real) {
+				continue
+			}
+			if p.inForbidden(real) {
+				continue
+			}
+			p.favs = append(p.favs, SaveFolder{Path: real, Label: f.Label, Source: f.Source})
+		}
+	})
+	return p.favs
+}
+
+// SaveFolders lists configured roots first, then valid favorites that are
+// not already inside a root.
+func (p *PathPolicy) SaveFolders() []SaveFolder {
+	var out []SaveFolder
+	for _, r := range p.Roots {
+		if rr, err := RealPath(r); err == nil {
+			out = append(out, SaveFolder{Path: rr, Label: filepath.Base(rr), Source: "root"})
+		}
+	}
+	for _, f := range p.validFavorites() {
+		dup := false
+		for _, o := range out {
+			if IsWithin(o.Path, f.Path) {
+				dup = true
+			}
+		}
+		if !dup {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+func (p *PathPolicy) inForbidden(real string) bool {
+	for _, list := range [][]string{p.Forbidden, p.Deny} {
+		for _, d := range list {
+			if d != "" && IsWithin(realOrClean(d), real) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // DefaultRoot returns the first configured root, or "".
@@ -104,7 +214,8 @@ func realOrClean(p string) string {
 	}
 }
 
-// resolvedRoots returns the real paths of all roots that currently exist.
+// resolvedRoots returns the real paths of all roots that currently exist,
+// plus valid pinned favorites.
 func (p *PathPolicy) resolvedRoots() []string {
 	out := make([]string, 0, len(p.Roots))
 	for _, r := range p.Roots {
@@ -112,36 +223,34 @@ func (p *PathPolicy) resolvedRoots() []string {
 			out = append(out, rr)
 		}
 	}
+	for _, f := range p.validFavorites() {
+		out = append(out, f.Path)
+	}
 	return out
 }
 
 // checkReal validates an already-resolved real path: inside a root, not in
-// a forbidden or denied folder, not inside a .rdl part folder.
+// a forbidden or denied folder, not inside a hidden or .rdl folder.
 func (p *PathPolicy) checkReal(real string) (root string, err error) {
 	for _, r := range p.resolvedRoots() {
-		if IsWithin(r, real) {
+		if IsWithin(r, real) && len(r) > len(root) {
 			root = r
-			break
 		}
 	}
 	if root == "" {
 		return "", pathBlocked("%s is not inside an allowed save folder", real)
 	}
-	for _, list := range [][]string{p.Forbidden, p.Deny} {
-		for _, d := range list {
-			if d == "" {
-				continue
-			}
-			if IsWithin(realOrClean(d), real) {
-				return "", pathBlocked("%s is inside a forbidden folder", real)
-			}
-		}
+	if p.inForbidden(real) {
+		return "", pathBlocked("%s is inside a forbidden folder", real)
 	}
 	rel, _ := filepath.Rel(root, real)
 	for _, part := range strings.Split(rel, string(filepath.Separator)) {
 		if samePathFold(part, PartDirName) {
 			return "", pathBlocked("rdl's working folder cannot be used as a destination")
 		}
+	}
+	if hasHiddenComponent(rel) {
+		return "", pathBlocked("hidden folders cannot be used as a destination")
 	}
 	return root, nil
 }
@@ -156,6 +265,23 @@ func (p *PathPolicy) ResolveDir(dir string) (string, error) {
 	dir = strings.TrimSpace(dir)
 	if strings.ContainsRune(dir, 0) {
 		return "", pathBlocked("path contains NUL")
+	}
+	if strings.HasPrefix(dir, "@") {
+		label, rest, _ := strings.Cut(strings.TrimPrefix(dir, "@"), "/")
+		if l2, r2, ok := strings.Cut(label, `\`); ok {
+			label, rest = l2, r2
+		}
+		var base string
+		for _, f := range p.SaveFolders() {
+			if strings.EqualFold(f.Label, label) || strings.EqualFold(filepath.Base(f.Path), label) {
+				base = f.Path
+				break
+			}
+		}
+		if base == "" {
+			return "", fmt.Errorf("no save folder or favorite named %q (see: rdl folders)", label)
+		}
+		dir = filepath.Join(base, filepath.FromSlash(rest))
 	}
 	if dir == "" {
 		dir = p.DefaultRoot()

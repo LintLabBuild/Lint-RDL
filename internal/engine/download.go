@@ -399,6 +399,9 @@ func (m *Manager) acceptHeaders(j *state.Job, resp *http.Response) error {
 		}
 		j.NameFixed = true
 	}
+	if policy.IsStreamManifest(resp.Header.Get("Content-Type"), j.Name) {
+		return permErr(policy.ErrStreamManifest)
+	}
 	if isHTMLType(resp.Header.Get("Content-Type")) && !wantsHTML(j.Name) {
 		return permErr("server sent a web page (text/html) instead of the file; it may be a login or error page")
 	}
@@ -610,6 +613,9 @@ func (m *Manager) Verify(ctx context.Context, id string) (sum string, match bool
 	}
 	if v.State != state.StateDone || v.FinalPath == "" {
 		return "", false, fmt.Errorf("job %s is %s, not done", id, v.State)
+	}
+	if v.Kind == "git" {
+		return "", false, fmt.Errorf("%s is a Git repository at commit %s; Git checked every object while cloning (transfer.fsckObjects)", v.FinalPath, v.Commit)
 	}
 	if err := m.o.Paths.CheckFinalPath(v.FinalPath); err != nil {
 		return "", false, err

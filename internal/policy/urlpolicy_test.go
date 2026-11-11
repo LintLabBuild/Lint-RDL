@@ -248,3 +248,26 @@ func FuzzCheckRawURL(f *testing.F) {
 		}
 	})
 }
+
+func TestStreamingSitesBlocked(t *testing.T) {
+	p := &URLPolicy{BlockedSites: []string{"example-tube.com"}}
+	for _, u := range []string{
+		"https://www.youtube.com/watch?v=abc", "https://youtu.be/abc", "https://rr3---sn-abc.googlevideo.com/videoplayback",
+		"https://m.youtube.com/shorts/x", "https://music.youtube.com/watch?v=1", "https://open.spotify.com/track/1",
+		"https://www.netflix.com/title/1", "https://mega.nz/file/abc#key", "https://vimeo.com/123",
+		"https://cdn.example.com/video/master.m3u8", "https://cdn.example.com/stream.MPD?x=1",
+		"https://sub.example-tube.com/x.mp4",
+	} {
+		if _, err := p.CheckRawURL(u); !errors.Is(err, ErrBlocked) {
+			t.Errorf("%s should be blocked, got %v", u, err)
+		}
+	}
+	for _, u := range []string{"https://notyoutube.com/x.zip", "https://github.com/a/b/releases/download/v1/x.zip", "https://example.com/video.mp4"} {
+		if _, err := p.CheckRawURL(u); err != nil {
+			t.Errorf("%s: %v", u, err)
+		}
+	}
+	if !IsStreamManifest("application/vnd.apple.mpegurl; charset=utf-8", "x") || IsStreamManifest("video/mp4", "a.mp4") {
+		t.Fatal("manifest detection")
+	}
+}

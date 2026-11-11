@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lintlabbuild/lint-rdl/internal/favorites"
 	"github.com/lintlabbuild/lint-rdl/internal/policy"
 	"github.com/lintlabbuild/lint-rdl/internal/state"
 )
@@ -33,6 +34,10 @@ type Config struct {
 	BlockExtensions string // off | warn | block
 	AllowPrivate    []string
 	DomainAllowlist []string
+	BlockedSites    []string
+	FavoriteFolders bool // use folders pinned in Explorer / file manager as save folders
+	GitHosts        []string
+	GitFullHistory  bool
 	Proxy           string
 	AllowOverwrite  bool // reserved; never used by phase 1
 
@@ -76,6 +81,8 @@ func Default() *Config {
 		SegmentsPerFile:  1,
 		SpeedLimit:       "off",
 		BlockExtensions:  "warn",
+		FavoriteFolders:  true,
+		GitHosts:         []string{"github.com", "gitlab.com", "codeberg.org", "bitbucket.org", "git.sr.ht", "gitea.com"},
 		ChunkMB:          8,
 		StallSeconds:     120,
 		LowSpeedBytes:    0,
@@ -227,6 +234,20 @@ func (c *Config) set(key string, v *yamlValue) error {
 		c.AllowPrivate, err = wantList(v)
 	case "domain_allowlist":
 		c.DomainAllowlist, err = wantList(v)
+	case "blocked_sites":
+		c.BlockedSites, err = wantList(v)
+	case "git_hosts":
+		c.GitHosts, err = wantList(v)
+	case "favorite_folders":
+		var s string
+		if s, err = wantScalar(v); err == nil {
+			c.FavoriteFolders, err = parseBool(s)
+		}
+	case "git_full_history":
+		var s string
+		if s, err = wantScalar(v); err == nil {
+			c.GitFullHistory, err = parseBool(s)
+		}
 	case "default_root":
 		c.DefaultRoot, err = wantScalar(v)
 	case "speed_limit":
@@ -420,17 +441,21 @@ func (c *Config) PathPolicy() *policy.PathPolicy {
 		}
 		roots = out
 	}
-	return &policy.PathPolicy{
+	p := &policy.PathPolicy{
 		Roots:     roots,
 		Deny:      c.Deny,
 		Forbidden: policy.DefaultForbidden(ConfigDir(), StateDir(), filepath.Dir(c.path)),
 		MaxDepth:  c.MaxMkdirDepth,
 	}
+	if c.FavoriteFolders {
+		p.Favorites = favorites.List
+	}
+	return p
 }
 
 // URLPolicy builds the URL policy from this config.
 func (c *Config) URLPolicy() (*policy.URLPolicy, error) {
-	p := &policy.URLPolicy{DomainAllowlist: c.DomainAllowlist}
+	p := &policy.URLPolicy{DomainAllowlist: c.DomainAllowlist, BlockedSites: c.BlockedSites}
 	for _, a := range c.AllowPrivate {
 		pr, err := policy.ParseAllowPrivate(a)
 		if err != nil {
@@ -505,6 +530,10 @@ func (c *Config) Render() string {
 	kv("block_extensions", quoteYAML(c.BlockExtensions))
 	list("allow_private", c.AllowPrivate, "Private addresses allowed as download sources. Only editable at the PC.")
 	list("domain_allowlist", c.DomainAllowlist, "Empty = any public domain.")
+	list("blocked_sites", c.BlockedSites, "Extra sites to refuse. Streaming sites (YouTube, Netflix, Spotify...) are always refused.")
+	kv("favorite_folders", strconv.FormatBool(c.FavoriteFolders)+"  # offer folders pinned in Explorer Quick access / file manager bookmarks")
+	list("git_hosts", c.GitHosts, "Hosts whose repository links are cloned with Git (if Git is installed).")
+	kv("git_full_history", strconv.FormatBool(c.GitFullHistory)+"  # false = shallow clone (latest commit only)")
 	kv("proxy", quoteYAML(c.Proxy))
 	kv("chunk_mb", strconv.Itoa(c.ChunkMB))
 	kv("stall_seconds", strconv.Itoa(c.StallSeconds))

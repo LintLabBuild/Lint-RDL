@@ -54,6 +54,45 @@ NAS, cloud metadata), and the PC itself (nothing downloaded is ever run).
   it fully needs handle-relative APIs (openat / `NtCreateFile` with a root
   handle), which is planned.
 
+## Favorite folders (`internal/favorites`, `PathPolicy.validFavorites`)
+
+Pinned folders become save folders without the owner typing `rdl roots add`.
+That is acceptable because pinning happens at the PC, by the owner. Still:
+
+| Threat | Defence | Test |
+|---|---|---|
+| A pinned drive root (`C:\`, `/`) or the home folder opens everything below it | Volume roots, the home folder and any parent of it are never used | `TestFavorites` |
+| Writing into hidden or config folders (`.config`, `.ssh`, `AppData`, PowerShell profile folders) inside a favorite | Hidden path components are refused below every save folder; AppData, `Documents\WindowsPowerShell` and `Documents\PowerShell`, `~/.config` and `~/.local` are always forbidden; file names can't start with a dot | `TestFavorites`, `TestHiddenFolderInsideRoot` |
+| A pinned system folder | The forbidden and deny lists apply to favorites too | `TestFavorites` |
+| Reading Quick access needs PowerShell | Fixed script string, absolute `%SystemRoot%` path, `-NoProfile -NonInteractive`, 10 s timeout; no user input reaches it | code review |
+
+## Content policy (`internal/policy/sitepolicy.go`)
+
+| Threat | Defence | Test |
+|---|---|---|
+| Ripping streams or DRM content (piracy) | Streaming and DRM sites are refused on every hop, including redirects. The list is built in and can only be extended. | `TestStreamingSitesBlocked` |
+| HLS/DASH playlists | Refused by extension in the URL and by `Content-Type` at probe and download time | `TestStreamingSitesBlocked`, `TestStreamPlaylistDownloadRefused`, `TestProbeContents` |
+| A disguised program (`photo.jpg` that is an `.exe`) | `probe` and `get` read the first bytes and warn; the MOTW still applies | `TestSniff`, `TestProbeContents` |
+| ZIP entries with `../` or absolute paths (zip-slip) | `probe` warns. rdl never extracts. | `TestListZipOverHTTP` |
+| Probe reads too much of a hostile file | The sample is 64 KB; ZIP listing has a budget (8 MB, 24 requests); safetensors headers are capped at 32 MB | `TestListZipOverHTTP` |
+
+## Git repositories (`internal/gitdl`)
+
+Git does its own networking, so rdl's dial-time IP check doesn't cover it.
+Instead:
+
+| Threat | Defence | Test |
+|---|---|---|
+| Git used for SSRF or local file access | Only `https://` links on allowlisted public hosts (`git_hosts`) with a strict owner/repo shape; `protocol.allow=never` except https; `http.followRedirects=false`; no userinfo or port | `TestDetect`, `TestCloneSafety` (`ext::` refused) |
+| Argument injection via branch names (`--upload-pack=...`) | Refs are validated (no leading `-`, no `..`) and passed as `--branch=<ref>` after the options, with the URL after `--` | `TestDetect` |
+| Code execution from the clone | No hooks (`core.hooksPath` and the template point to an empty folder), `core.fsmonitor=false`, no submodules, `core.symlinks=false` (symlinks become plain files), `core.protectNTFS`; rdl never runs anything inside | `TestCloneSafety` |
+| Credential leaks or hangs on prompts | `credential.helper=` (empty), `GIT_TERMINAL_PROMPT=0`, no askpass. Public repositories only. | code review |
+| Corrupt objects | `transfer.fsckObjects=true` | |
+
+**Known gaps:** Git LFS (if installed) fetches large files from the host's LFS
+server through `git-lfs`. The Mark of the Web is written on every checked-out
+file on Windows, but not inside `.git`.
+
 ## Integrity (engine)
 
 | Threat | Defence | Test |

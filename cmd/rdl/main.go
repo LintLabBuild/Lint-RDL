@@ -34,7 +34,7 @@ const usage = `rdl - resumable download manager
 
 Downloads:
   rdl probe <url>                       report size, resumability, checksum, name (no download)
-  rdl get <url>... [flags]              download now, in this window (resumes if run again)
+  rdl get <url>... [flags]              show what it is, then download in this window (resumes if run again)
   rdl add <url> [flags]                 queue a download (run it with "rdl run")
   rdl add-batch <manifest.json>         queue many: [{"url","to","name","sha256"}]
   rdl hf <owner/repo> <path>... [--rev r] [--to dir]
@@ -55,7 +55,13 @@ At the PC only (config):
   rdl audit [-n 50]
   rdl whoami | version
 
-Flags for get/add: --to <folder>  --name <file>  --sha256 <hash>  --dup copy  --json
+Flags for get/add: --to <folder|@favorite>  --name <file>  --sha256 <hash>  --dup copy
+                   --all (web folders: every file)  -y (don't ask)  --json
+
+rdl get shows what a link is (type, size, files inside) and, in a terminal,
+asks where to save it (configured folders and folders pinned in File Explorer /
+your file manager). Git repository links are cloned if Git is installed.
+Streaming sites (YouTube, Netflix, Spotify...) and stream playlists are refused.
 `
 
 func main() {
@@ -364,61 +370,20 @@ func cmdProbe(args []string, w io.Writer) error {
 	defer a.close()
 	ctx, cancel := signalContext()
 	defer cancel()
-	r, err := engine.Probe(ctx, a.m.Client(), a.urls, pos[0], "")
+	r, err := a.m.Probe(ctx, pos[0])
 	if err != nil {
 		return err
 	}
 	if *asJSON {
 		return printJSON(w, r)
 	}
-	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintf(tw, "URL\t%s\n", r.URL)
-	fu := r.FinalURL
-	extra := fmt.Sprintf("%d redirects", r.Redirects)
-	if r.Signed {
-		extra += ", signed"
-		if r.ExpiresIn > 0 {
-			extra += ", expires in ~" + r.ExpiresIn.Round(time.Minute).String()
-		}
-	}
-	if len(fu) > 100 {
-		fu = fu[:100] + "..."
-	}
-	fmt.Fprintf(tw, "Final URL\t%s (%s)\n", fu, extra)
-	fmt.Fprintf(tw, "Size\t%s\n", policy.HumanBytes(r.Size))
-	fmt.Fprintf(tw, "Resumable\t%s\n", r.Resumable)
-	ver := []string{}
-	if r.ETag != "" {
-		ver = append(ver, "ETag "+r.ETag)
-	}
-	if r.LastModified != "" {
-		ver = append(ver, "Last-Modified "+r.LastModified)
-	}
-	if len(ver) == 0 {
-		ver = []string{"none"}
-	}
-	fmt.Fprintf(tw, "Version\t%s\n", strings.Join(ver, "  "))
-	if r.SHA256 != "" {
-		fmt.Fprintf(tw, "Checksum\tSHA-256 %s\n", r.SHA256)
-	} else {
-		fmt.Fprintf(tw, "Checksum\tunknown (pass --sha256 to verify)\n")
-	}
-	fmt.Fprintf(tw, "Filename\t%s (from %s)\n", r.Filename, r.FilenameSource)
-	enc := r.Encoding
-	if enc == "" {
-		enc = "none (safe to resume)"
-	}
-	fmt.Fprintf(tw, "Encoding\t%s\n", enc)
-	for _, n := range r.Notes {
-		fmt.Fprintf(tw, "Note\t%s\n", n)
-	}
-	fmt.Fprintf(tw, "Verdict\t%s\n", r.Verdict)
-	return tw.Flush()
+	printProbe(w, r, 30)
+	return nil
 }
 
 type addFlags struct {
 	to, name, sha, dup *string
-	asJSON             *bool
+	asJSON, all, yes   *bool
 }
 
 func newAddFlags(name string) (*flag.FlagSet, addFlags) {
@@ -429,6 +394,8 @@ func newAddFlags(name string) (*flag.FlagSet, addFlags) {
 		sha:    fs.String("sha256", "", ""),
 		dup:    fs.String("dup", "", ""),
 		asJSON: fs.Bool("json", false, ""),
+		all:    fs.Bool("all", false, ""),
+		yes:    fs.Bool("y", false, ""),
 	}
 }
 
@@ -448,6 +415,18 @@ func cmdAdd(args []string, w io.Writer) error {
 	defer a.close()
 	if len(a.paths.Roots) == 0 {
 		return errNoRoots
+	}
+	if *f.all {
+		ctx, cancel := signalContext()
+		plan, err := planDownloads(ctx, a, pos, true, true, w)
+		cancel()
+		if err != nil {
+			return err
+		}
+		pos = pos[:0]
+		for _, p := range plan {
+			pos = append(pos, p.url)
+		}
 	}
 	var jobs []*state.Job
 	for _, u := range pos {
@@ -565,9 +544,41 @@ func cmdGet(args []string, w, ew io.Writer) error {
 	if len(a.paths.Roots) == 0 {
 		return errNoRoots
 	}
+	// Tell the user what each link is before downloading anything.
+	interactive := isInteractive() && !*f.yes && !*f.asJSON
+	pctx, pcancel := signalContext()
+	plan, err := planDownloads(pctx, a, pos, *f.all, *f.asJSON, w)
+	pcancel()
+	if err != nil {
+		return err
+	}
+	dir := *f.to
+	if interactive {
+		if dir == "" {
+			if dir, err = pickFolder(a, w); err != nil {
+				return err
+			}
+		}
+		what := fmt.Sprintf("%d downloads", len(plan))
+		if len(plan) == 1 {
+			what = "this"
+		}
+		target := dir
+		if target == "" {
+			target = a.paths.DefaultRoot()
+		}
+		if !confirm(w, fmt.Sprintf("Download %s into %s?", what, target)) {
+			return exitError{code: 1, msg: "cancelled"}
+		}
+	}
 	var ids []string
-	for _, u := range pos {
-		job, err := a.m.Add(engine.AddRequest{URL: u, Dir: *f.to, Name: *f.name, SHA256: *f.sha,
+	for _, p := range plan {
+		u := p.url
+		sha := *f.sha
+		if sha == "" {
+			sha = p.sha
+		}
+		job, err := a.m.Add(engine.AddRequest{URL: u, Dir: dir, Name: *f.name, SHA256: sha, ExpectedSize: p.size,
 			AllowDuplicate: *f.dup == "copy", Owner: a.me.ID, Via: "cli"})
 		if errors.Is(err, engine.ErrDuplicate) {
 			// Same URL already known: resume that job instead.
@@ -707,6 +718,10 @@ func summaryExit(views []engine.JobView, w io.Writer) error {
 	for _, v := range views {
 		switch v.State {
 		case state.StateDone:
+			if v.Kind == "git" {
+				fmt.Fprintf(w, "done    %s  %s  Git repository, %d files, commit %.12s\n", v.ID, v.FinalPath, v.FileCount, v.Commit)
+				continue
+			}
 			check := "SHA-256 " + v.SHA256
 			if v.Verified {
 				check = "SHA-256 OK (matches expected)"

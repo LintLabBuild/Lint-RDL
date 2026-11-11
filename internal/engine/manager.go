@@ -17,6 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/lintlabbuild/lint-rdl/internal/gitdl"
 	"github.com/lintlabbuild/lint-rdl/internal/policy"
 	"github.com/lintlabbuild/lint-rdl/internal/power"
 	"github.com/lintlabbuild/lint-rdl/internal/state"
@@ -51,6 +52,11 @@ type Options struct {
 	BlockExtensions string        // off | warn | block
 	BlockedExts     []string
 	UserAgent       string
+	// GitPath is the git executable ("" = Git not installed). Repository
+	// links on GitHosts are cloned with it.
+	GitPath        string
+	GitHosts       []string
+	GitFullHistory bool
 	// Authorize may add credentials to the first request of each attempt
 	// (e.g. a Hugging Face token for huggingface.co only). Go drops the
 	// Authorization header on redirects to other hosts.
@@ -314,6 +320,15 @@ func (m *Manager) Add(r AddRequest) (*state.Job, error) {
 	if err != nil {
 		return nil, err
 	}
+	if raw, ok := gitdl.RewriteBlob(u); ok {
+		if u, err = m.o.URLPolicy.CheckRawURL(raw.String()); err != nil {
+			return nil, err
+		}
+	}
+	repo, isRepo := gitdl.Detect(u, m.o.GitHosts)
+	if isRepo && m.o.GitPath == "" {
+		return nil, gitdl.ErrNoGit
+	}
 	dir, err := m.o.Paths.ResolveDir(r.Dir)
 	if err != nil {
 		return nil, err
@@ -352,6 +367,17 @@ func (m *Manager) Add(r AddRequest) (*state.Job, error) {
 		ID: id, URL: u.String(), Dir: dir, Name: name, NameFixed: fixed,
 		Owner: r.Owner, Via: r.Via, CreatedAt: now, UpdatedAt: now,
 		ExpectedSize: size, ExpectedSHA256: sha, State: state.StateQueued, Resumable: true,
+	}
+	if isRepo {
+		job.Kind = "git"
+		job.GitURL = repo.CloneURL
+		job.GitRef = repo.Ref
+		job.GitFull = m.o.GitFullHistory
+		job.Resumable = false
+		job.ExpectedSHA256 = ""
+		if !fixed {
+			job.Name = policy.SanitizeFilename(repo.Name, "repo-"+id)
+		}
 	}
 	m.mu.Lock()
 	if !r.AllowDuplicate {
@@ -590,7 +616,7 @@ func (m *Manager) finishCancel(jr *jobRun) {
 	jr.written.Store(0)
 	m.mu.Unlock()
 	if part != "" {
-		os.Remove(part)
+		os.RemoveAll(part)
 	}
 	m.setState(jr, state.StateCancelled, "")
 	m.auditJob(jr, "cancel", "cancelled")
@@ -609,7 +635,7 @@ func (m *Manager) Remove(id string) error {
 		return fmt.Errorf("job %s is still %s; cancel it first", id, jr.job.State)
 	}
 	if jr.job.PartPath != "" && jr.job.State != state.StateDone {
-		os.Remove(jr.job.PartPath)
+		os.RemoveAll(jr.job.PartPath)
 	}
 	delete(m.jobs, id)
 	m.notifyLocked()
@@ -686,7 +712,12 @@ func (m *Manager) runLoop(ctx context.Context, jr *jobRun) {
 		m.awake.Acquire()
 		m.setState(jr, state.StateRunning, "")
 		before := jr.written.Load()
-		err := m.attempt(ctx, jr)
+		var err error
+		if m.snapshot(jr).Kind == "git" {
+			err = m.attemptGit(ctx, jr)
+		} else {
+			err = m.attempt(ctx, jr)
+		}
 		progressed := jr.written.Load() > before
 		m.awake.Release()
 		<-m.sem

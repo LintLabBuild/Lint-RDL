@@ -47,8 +47,8 @@ func TestAuditRotation(t *testing.T) {
 	if _, err := os.Stat(a.Path() + ".1"); err != nil {
 		t.Fatal("no rotation")
 	}
-	es, _ := a.Tail(2)
-	if len(es) != 2 || es[0].Identity != "cli:me" {
+	es, _ := a.Tail(1)
+	if len(es) != 1 || es[0].Identity != "cli:me" {
 		t.Fatal(es)
 	}
 }

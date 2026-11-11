@@ -90,5 +90,16 @@ func DefaultForbidden(extra ...string) []string {
 	add(env("ProgramW6432"))
 	add(env("ProgramData"), "Microsoft", "Windows", "Start Menu")
 	add(env("APPDATA"), "Microsoft", "Windows", "Start Menu")
+	// The whole AppData tree holds autostart and config locations.
+	add(env("USERPROFILE"), "AppData")
+	add(env("LOCALAPPDATA"))
+	add(env("APPDATA"))
+	// PowerShell profiles in Documents run on every PowerShell start.
+	for _, docs := range []string{filepath.Join(env("USERPROFILE"), "Documents"), filepath.Join(env("OneDrive"), "Documents")} {
+		if env("USERPROFILE") == "" {
+			break
+		}
+		out = append(out, filepath.Join(docs, "WindowsPowerShell"), filepath.Join(docs, "PowerShell"))
+	}
 	return append(out, extra...)
 }

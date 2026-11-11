@@ -41,6 +41,7 @@ func (s JobState) Terminal() bool {
 // Job is everything rdl must remember to resume a download after a crash.
 type Job struct {
 	ID        string    `json:"id"`
+	Kind      string    `json:"kind,omitempty"`      // "" = file over HTTP, "git" = repository clone
 	URL       string    `json:"url"`                 // original URL, re-requested on every attempt
 	FinalURL  string    `json:"final_url,omitempty"` // last URL after redirects (informational)
 	Dir       string    `json:"dir"`                 // real, checked save folder
@@ -65,6 +66,12 @@ type Job struct {
 	Error    string   `json:"error,omitempty"`
 	Notice   string   `json:"notice,omitempty"` // e.g. "file changed on server, restarted"
 	Attempts int      `json:"attempts"`
+
+	GitURL    string `json:"git_url,omitempty"`
+	GitRef    string `json:"git_ref,omitempty"`
+	GitFull   bool   `json:"git_full,omitempty"`
+	Commit    string `json:"commit,omitempty"`
+	FileCount int    `json:"file_count,omitempty"`
 
 	FinalPath string    `json:"final_path,omitempty"`
 	SHA256    string    `json:"sha256,omitempty"` // computed hash of the finished file

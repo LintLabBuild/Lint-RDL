@@ -12,6 +12,7 @@ import (
 	"github.com/lintlabbuild/lint-rdl/internal/command"
 	"github.com/lintlabbuild/lint-rdl/internal/config"
 	"github.com/lintlabbuild/lint-rdl/internal/engine"
+	"github.com/lintlabbuild/lint-rdl/internal/gitdl"
 	"github.com/lintlabbuild/lint-rdl/internal/hf"
 	"github.com/lintlabbuild/lint-rdl/internal/policy"
 	"github.com/lintlabbuild/lint-rdl/internal/state"
@@ -77,6 +78,9 @@ func openApp(needLock bool) (*app, error) {
 		SpeedLimit:      speed,
 		RetryAfterCap:   time.Duration(cfg.RetryAfterCapSec) * time.Second,
 		BlockExtensions: cfg.BlockExtensions,
+		GitPath:         gitdl.LookPath(),
+		GitHosts:        cfg.GitHosts,
+		GitFullHistory:  cfg.GitFullHistory,
 		OnEvent: func(ev engine.Event) {
 			if a.onEvent != nil {
 				a.onEvent(ev)

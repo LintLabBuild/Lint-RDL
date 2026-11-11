@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/lintlabbuild/lint-rdl/internal/favorites"
 )
 
 func TestSanitizeFilename(t *testing.T) {
@@ -254,5 +256,63 @@ func TestDiskGuard(t *testing.T) {
 	}
 	if _, err := StatDisk(t.TempDir()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestFavorites(t *testing.T) {
+	p, _ := setupRoots(t)
+	home, _ := RealPath(t.TempDir())
+	fav := filepath.Join(home, "AI Models")
+	os.MkdirAll(filepath.Join(fav, "vae"), 0o755)
+	hidden := filepath.Join(home, ".secret")
+	os.MkdirAll(hidden, 0o755)
+	forbidden := filepath.Join(home, "Startup")
+	os.MkdirAll(forbidden, 0o755)
+	p.Forbidden = append(p.Forbidden, forbidden)
+	p.Home = home
+	calls := 0
+	p.Favorites = func() []favorites.Folder {
+		calls++
+		return []favorites.Folder{
+			{Path: fav, Label: "Models", Source: "gtk"},
+			{Path: home, Label: "Home"},                       // home itself: rejected
+			{Path: filepath.Dir(home), Label: "Parent"},       // parent of home: rejected
+			{Path: string(filepath.Separator), Label: "Root"}, // volume root: rejected
+			{Path: hidden, Label: "Hidden"},                   // hidden: rejected
+			{Path: forbidden, Label: "Startup"},               // forbidden: rejected
+			{Path: filepath.Join(home, "missing"), Label: "Gone"},
+			{Path: "relative/path", Label: "Rel"},
+		}
+	}
+	sf := p.SaveFolders()
+	if len(sf) != 2 || sf[1].Path != fav || sf[1].Label != "Models" {
+		t.Fatalf("%+v", sf)
+	}
+	if d, err := p.ResolveDir(filepath.Join(fav, "vae")); err != nil || d != filepath.Join(fav, "vae") {
+		t.Fatalf("favorite not usable: %v", err)
+	}
+	if d, err := p.ResolveDir("@Models/vae"); err != nil || d != filepath.Join(fav, "vae") {
+		t.Fatalf("@label: %v %v", d, err)
+	}
+	if _, err := p.ResolveDir("@Nope"); err == nil {
+		t.Fatal("unknown label accepted")
+	}
+	if _, err := p.ResolveDir(home); err == nil {
+		t.Fatal("home accepted as destination")
+	}
+	if _, err := p.ResolveDir(hidden); err == nil {
+		t.Fatal("hidden favorite accepted")
+	}
+	p.SaveFolders()
+	if calls != 1 {
+		t.Fatalf("favorites read %d times", calls)
+	}
+}
+
+func TestHiddenFolderInsideRoot(t *testing.T) {
+	p, root := setupRoots(t)
+	os.MkdirAll(filepath.Join(root, ".git", "hooks"), 0o755)
+	if _, err := p.ResolveDir(".git/hooks"); !errors.Is(err, ErrPathBlocked) {
+		t.Fatalf("hidden folder accepted: %v", err)
 	}
 }

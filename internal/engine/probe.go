@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lintlabbuild/lint-rdl/internal/gitdl"
+	"github.com/lintlabbuild/lint-rdl/internal/inspect"
 	"github.com/lintlabbuild/lint-rdl/internal/policy"
 )
 
@@ -41,6 +43,69 @@ type ProbeResult struct {
 	FilenameSource string        `json:"filename_source"`
 	Verdict        string        `json:"verdict"`
 	Notes          []string      `json:"notes,omitempty"`
+
+	// Kind is "file", "folder" (a web folder listing) or "git".
+	Kind     string            `json:"kind"`
+	Type     *inspect.Type     `json:"type,omitempty"`
+	Contents *inspect.Contents `json:"contents,omitempty"`
+	Warnings []string          `json:"warnings,omitempty"`
+	Git      *GitProbe         `json:"git,omitempty"`
+}
+
+// GitProbe describes a repository link.
+type GitProbe struct {
+	Repo         gitdl.Repo  `json:"repo"`
+	GitInstalled bool        `json:"git_installed"`
+	Info         *gitdl.Info `json:"info,omitempty"`
+}
+
+// Probe inspects a link with the manager's policies: files, web folders
+// and Git repositories.
+func (m *Manager) Probe(ctx context.Context, rawURL string) (*ProbeResult, error) {
+	u, err := m.o.URLPolicy.CheckRawURL(rawURL)
+	if err != nil {
+		return nil, err
+	}
+	var notes []string
+	if raw, ok := gitdl.RewriteBlob(u); ok {
+		notes = append(notes, "file view link turned into the raw file link: "+raw.String())
+		u = raw
+	}
+	if repo, ok := gitdl.Detect(u, m.o.GitHosts); ok {
+		res := &ProbeResult{URL: u.String(), Kind: "git", Size: -1, Resumable: "NO (Git clone restarts if interrupted)",
+			Git: &GitProbe{Repo: *repo, GitInstalled: m.o.GitPath != ""}, Filename: policy.SanitizeFilename(repo.Name, "repo"), FilenameSource: "repository name"}
+		res.Type = &inspect.Type{Kind: "repository", Description: "Git repository"}
+		if info, err := gitdl.ProbeGitHub(ctx, m.client, repo); err == nil {
+			res.Git.Info = info
+			if info.FileCount > 0 {
+				res.Size = info.FilesSize
+				c := &inspect.Contents{Kind: "git", Files: info.FileCount, Folders: info.FolderCount, TotalSize: info.FilesSize, Truncated: info.Truncated}
+				for _, f := range info.Files {
+					c.Entries = append(c.Entries, inspect.Entry{Name: f.Path, Size: f.Size})
+				}
+				c.Summary = fmt.Sprintf("repository with %d files in %d folders, %s", info.FileCount, info.FolderCount, policy.HumanBytes(info.FilesSize))
+				res.Contents = c
+			}
+		} else {
+			notes = append(notes, "file list unavailable: "+err.Error())
+		}
+		if m.o.GitPath == "" {
+			res.Verdict = gitdl.ErrNoGit.Error()
+		} else {
+			hist := "latest commit only; set git_full_history: true for the full history"
+			if m.o.GitFullHistory {
+				hist = "full history"
+			}
+			res.Verdict = "Will be cloned with your Git (" + hist + "). Nothing in it is run. If interrupted, the clone starts over."
+		}
+		res.Notes = notes
+		return res, nil
+	}
+	res, err := probeHTTP(ctx, m.client, u, m.o.UserAgent)
+	if res != nil {
+		res.Notes = append(notes, res.Notes...)
+	}
+	return res, err
 }
 
 func newReq(ctx context.Context, method, u string, ua string) (*http.Request, error) {
@@ -53,17 +118,23 @@ func newReq(ctx context.Context, method, u string, ua string) (*http.Request, er
 	return req, nil
 }
 
-// Probe inspects a URL: final location, size, resumability, version
-// stamps, checksum hints and the file name, without downloading it.
+// Probe inspects a plain URL (no Git handling): final location, size,
+// resumability, version stamps, checksum hints, file name, type and
+// contents, without downloading it.
 func Probe(ctx context.Context, client *http.Client, up *policy.URLPolicy, rawURL, userAgent string) (*ProbeResult, error) {
 	u, err := up.CheckRawURL(rawURL)
 	if err != nil {
 		return nil, err
 	}
+	return probeHTTP(ctx, client, u, userAgent)
+}
+
+func probeHTTP(ctx context.Context, client *http.Client, u *url.URL, userAgent string) (*ProbeResult, error) {
+	var err error
 	if userAgent == "" {
 		userAgent = DefaultUserAgent
 	}
-	res := &ProbeResult{URL: u.String(), Size: -1}
+	res := &ProbeResult{URL: u.String(), Size: -1, Kind: "file"}
 	countRedirects := func(r *http.Response) int {
 		n := 0
 		for req := r.Request; req != nil && req.Response != nil; req = req.Response.Request {
@@ -188,10 +259,19 @@ func Probe(ctx context.Context, client *http.Client, up *policy.URLPolicy, rawUR
 		res.CanResume = true
 	}
 	pickName(res, head, u)
+	inspectContent(ctx, client, res, rangeOK, userAgent)
+	if res.Kind == "folder" {
+		res.Resumable = "-"
+		res.Verdict = fmt.Sprintf("This is a %s. Download its files with `rdl get --all <url>` (subfolders are not included).", res.Contents.Summary)
+		return res, nil
+	}
+	if policy.IsStreamManifest(res.ContentType, res.Filename) {
+		return nil, fmt.Errorf("%w: %s", policy.ErrBlocked, policy.ErrStreamManifest)
+	}
 
 	var v []string
-	if isHTMLType(res.ContentType) && !wantsHTML(res.Filename) {
-		v = append(v, "Warning: server sends a web page (text/html), not a file. It may be a login or error page.")
+	if (isHTMLType(res.ContentType) || (res.Type != nil && res.Type.Kind == "html")) && !wantsHTML(res.Filename) {
+		v = append(v, "Warning: this link opens a web page, not a file (maybe a login, error or player page); rdl will refuse to save it.")
 	}
 	switch {
 	case res.CanResume && res.Resumable == ResumableYes:
@@ -248,4 +328,91 @@ func shortErr(err error) string {
 		s = s[:160] + "..."
 	}
 	return s
+}
+
+// sampleSize is how much of the start of a file probe reads to detect its
+// type (the bytes are only inspected, never passed on).
+const sampleSize = 64 << 10
+
+func readSample(ctx context.Context, client *http.Client, u, ua string, n int64, ranged bool) ([]byte, error) {
+	req, err := newReq(ctx, http.MethodGet, u, ua)
+	if err != nil {
+		return nil, err
+	}
+	if ranged {
+		req.Header.Set("Range", fmt.Sprintf("bytes=0-%d", n-1))
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
+		return nil, fmt.Errorf("status %d", resp.StatusCode)
+	}
+	if enc := resp.Header.Get("Content-Encoding"); enc != "" && !strings.EqualFold(enc, "identity") {
+		return nil, fmt.Errorf("compressed transfer")
+	}
+	return io.ReadAll(io.LimitReader(resp.Body, n))
+}
+
+// inspectContent fills Type, Contents and Warnings.
+func inspectContent(ctx context.Context, client *http.Client, res *ProbeResult, rangeOK bool, ua string) {
+	sample, err := readSample(ctx, client, res.FinalURL, ua, sampleSize, rangeOK)
+	if err != nil {
+		res.Notes = append(res.Notes, "could not read a sample to detect the type: "+shortErr(err))
+	}
+	typ, mismatch := inspect.Sniff(sample, res.Filename, res.ContentType)
+	res.Type = &typ
+	if mismatch != "" {
+		res.Warnings = append(res.Warnings, mismatch+".")
+	}
+	if typ.Executable {
+		res.Warnings = append(res.Warnings, "This is a program or script. rdl never runs it; on Windows it is marked as downloaded from the internet.")
+	}
+	switch {
+	case typ.Kind == "html":
+		if final, err := url.Parse(res.FinalURL); err == nil && inspect.IsFolderListing(sample) {
+			res.Kind = "folder"
+			res.Contents = inspect.ParseFolderListing(final, sample)
+		}
+	case typ.Description == "ZIP archive" || strings.Contains(typ.Description, "(ZIP"):
+		if !rangeOK || res.Size <= 0 {
+			res.Notes = append(res.Notes, "archive contents can't be listed: server doesn't support ranges")
+			return
+		}
+		ra := &inspect.RangeReaderAt{Ctx: ctx, Client: client, URL: res.FinalURL, Size: res.Size, UA: ua}
+		if c, err := inspect.ListZip(ra, res.Size); err == nil {
+			res.Contents = c
+		} else {
+			res.Notes = append(res.Notes, "archive contents not listed: "+shortErr(err))
+		}
+	case typ.Description == "safetensors model":
+		hdr := sample
+		if n, err := safetensorsLen(sample); err == nil && int64(len(sample)) < 8+n {
+			if !rangeOK {
+				return
+			}
+			if hdr, err = readSample(ctx, client, res.FinalURL, ua, 8+n, true); err != nil {
+				return
+			}
+		}
+		if ts, err := inspect.ParseSafetensors(hdr); err == nil {
+			res.Contents = &inspect.Contents{Kind: "safetensors", Files: 1, TotalSize: res.Size, Summary: ts.Summary()}
+			for _, name := range ts.Sample {
+				res.Contents.Entries = append(res.Contents.Entries, inspect.Entry{Name: name, Size: -1})
+			}
+		}
+	}
+}
+
+func safetensorsLen(b []byte) (int64, error) {
+	if len(b) < 8 {
+		return 0, fmt.Errorf("short")
+	}
+	n := int64(b[0]) | int64(b[1])<<8 | int64(b[2])<<16 | int64(b[3])<<24 | int64(b[4])<<32 | int64(b[5])<<40 | int64(b[6])<<48 | int64(b[7])<<56
+	if n < 2 || n > 32<<20 {
+		return 0, fmt.Errorf("bad header")
+	}
+	return n, nil
 }

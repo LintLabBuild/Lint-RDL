@@ -35,3 +35,9 @@ func scrub(raw string) string {
 	u.RawQuery = ""
 	return u.String()
 }
+
+// MarkTree writes the Mark of the Web on every file below dir (skipping
+// .git), up to limit files. No-op outside Windows.
+func MarkTree(dir, originalURL string, limit int) (int, error) {
+	return markTree(dir, originalURL, limit)
+}

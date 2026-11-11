@@ -212,7 +212,7 @@ func (d *Dispatcher) run(ctx context.Context, name string, c Command) Result {
 		if err := needArgs(c, 1, "probe <url>"); err != nil {
 			return fail(err)
 		}
-		r, err := engine.Probe(ctx, d.M.Client(), d.URLs, c.Args[0], "")
+		r, err := d.M.Probe(ctx, c.Args[0])
 		if err != nil {
 			return fail(err)
 		}
@@ -318,13 +318,16 @@ func (d *Dispatcher) run(ctx context.Context, name string, c Command) Result {
 		return Result{OK: ok, Message: msg, Data: map[string]any{"sha256": sum, "match": ok}}
 
 	case "folders":
-		var out []string
-		for _, r := range d.Paths.Roots {
-			if rr, err := d.Paths.ResolveDir(r); err == nil {
-				out = append(out, rr)
+		sf := d.Paths.SaveFolders()
+		var lines []string
+		for i, f := range sf {
+			src := ""
+			if f.Source != "root" {
+				src = " (pinned in " + f.Source + ")"
 			}
+			lines = append(lines, fmt.Sprintf("%d) %s  %s%s", i+1, f.Label, f.Path, src))
 		}
-		return Result{OK: true, Message: strings.Join(out, "\n"), Data: out}
+		return Result{OK: true, Message: strings.Join(lines, "\n"), Data: sf}
 
 	case "ls":
 		dir := ""

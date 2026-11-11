@@ -445,3 +445,13 @@ Releases: GitHub Actions builds `rdl.exe` (Windows amd64/arm64) and Linux binari
 | HF token | `RDL_HF_TOKEN` environment variable, sent only to `huggingface.co` (Go drops it on cross-host redirects). | Credential Manager integration is phase 2. |
 | Unicode NFC | **Not yet done** (needs `golang.org/x/text`). Bidi, zero-width and other format characters are removed. | Tracked in THREATS.md. |
 | Linux keep-awake | No-op; run under `systemd-inhibit`. | Windows is the target. |
+
+## Additions requested after phase 1
+
+| Request | Design |
+|---|---|
+| Linux is a first-class target, not just "same code" | CI runs on Linux and Windows; keep-awake uses `systemd-inhibit` on Linux and `caffeinate` on macOS; Linux file-manager bookmarks are read; Linux system folders and hidden folders are protected |
+| Folders pinned in File Explorer are offered as save locations | `internal/favorites` reads Quick access (Windows) and GTK/KDE bookmarks (Linux). Valid ones become save folders (`favorite_folders: true`). System folders, drive roots, home and its parents, and hidden folders are skipped. Pickers list roots first, then favorites. `--to @Label` selects one by name. |
+| Git links download if Git is installed | `internal/gitdl` detects repository links on `git_hosts` and clones with the user's Git under strict `-c` options (see THREATS.md). Blob links become raw file downloads. Not built in: without Git, a clear message. |
+| No piracy, no links that hide their content | Built-in streaming and DRM site list, HLS/DASH playlist refusal, MEGA refused |
+| Tell the user what a link is first, torrent-style | `internal/inspect`: type from magic bytes, mismatch warnings, ZIP listing via range requests, safetensors summary, web folder listing (`--all` to download), GitHub repository file list. `rdl get` shows this before downloading and asks in a terminal. |
