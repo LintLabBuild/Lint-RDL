@@ -106,6 +106,8 @@ file on Windows, but not inside `.git`.
 | HTML error or login page saved as the file | `text/html` for a non-HTML name fails the job | `TestHTMLErrorPageFails` |
 | Truncated or extended data | Expected size is enforced; extra bytes cause a restart | `TestResumeAfterCuts` |
 | Wrong file (tampered, or the wrong link) | Expected SHA-256 from the user, Hugging Face (`lfs.oid`) or a manifest. A mismatch discards the data and the file is never moved into place. | `TestChecksumMismatchFails` |
+| Ratchet appends to a part that came from a different file | The saved part is re-hashed in memory as the server re-sends it and compared with the saved SHA-256 state before anything is appended; a mismatch, a different size or validators, or a shorter file restarts. After `relink` without a known hash, the part is verified first. | `TestRatchetDetectsChangedFile`, `TestRelinkExpiredLink` |
+| Server answers ranges wrongly in a loop | `RangeBroken` is saved and rdl stops asking for ranges | `TestWrongContentRangeNoCuts` |
 | Crash or power cut | fsync, then a journal write with hash state; on start, truncate to the checkpoint | `TestCrashRecovery` (20 kills plus garbage after the checkpoint) |
 | Stalls, slow links | Stall watchdog (default 2 min), low-speed limit | `TestStallReconnects` |
 | Expired signed URL | The original URL is requested again on every attempt | `TestSignedURLExpiry` |

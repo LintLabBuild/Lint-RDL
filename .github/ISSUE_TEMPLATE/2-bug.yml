@@ -1,0 +1,26 @@
+name: Report a bug
+description: A download failed, resumed wrongly, or rdl did something unexpected.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps / command
+      description: The rdl command you ran. Remove private links and tokens.
+      render: shell
+  - type: textarea
+    id: probe
+    attributes:
+      label: Output of `rdl probe <url>` and `rdl status <id>`
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: rdl version and OS
+      placeholder: "rdl 0.1.0-dev, Windows 11 / Ubuntu 24.04"

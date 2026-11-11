@@ -63,7 +63,7 @@ var ErrDenied = errors.New("not allowed for your role")
 // Names of the shared commands.
 var Names = []string{
 	"probe", "add", "add-batch", "hf", "list", "status", "wait", "pause", "resume",
-	"cancel", "retry", "verify", "folders", "ls", "mkdir", "when-done", "power",
+	"cancel", "retry", "relink", "verify", "folders", "ls", "mkdir", "when-done", "power",
 	"cancel-power", "limit", "disk", "whoami",
 }
 
@@ -225,6 +225,7 @@ func (d *Dispatcher) run(ctx context.Context, name string, c Command) Result {
 		job, err := d.M.Add(engine.AddRequest{
 			URL: c.Args[0], Dir: c.Flag("to"), Name: c.Flag("name"), SHA256: c.Flag("sha256"),
 			AllowDuplicate: c.Flag("dup") == "copy", Owner: c.Identity.ID, Via: c.Identity.Via,
+			ResumeMode: c.Flag("resume-mode"),
 		})
 		if err != nil {
 			return fail(err)
@@ -295,12 +296,35 @@ func (d *Dispatcher) run(ctx context.Context, name string, c Command) Result {
 		case "cancel":
 			err = d.M.Cancel(j.ID)
 		case "retry":
+			if m := c.Flag("resume-mode"); m != "" {
+				if err = d.M.SetResumeMode(j.ID, m); err != nil {
+					break
+				}
+			}
 			err = d.M.Retry(j.ID)
 		}
 		if err != nil {
 			return fail(err)
 		}
 		return Result{OK: true, Message: name + " " + j.ID}
+
+	case "relink":
+		j, err := d.job(c, "relink <id> <new-url>")
+		if err != nil {
+			return fail(err)
+		}
+		if len(c.Args) < 2 {
+			return fail(errors.New("usage: relink <id> <new-url>"))
+		}
+		if m := c.Flag("resume-mode"); m != "" {
+			if err := d.M.SetResumeMode(j.ID, m); err != nil {
+				return fail(err)
+			}
+		}
+		if err := d.M.Relink(j.ID, c.Args[1], c.Flag("sha256")); err != nil {
+			return fail(err)
+		}
+		return Result{OK: true, Message: "relinked " + j.ID + "; the part already saved is kept"}
 
 	case "verify":
 		j, err := d.job(c, "verify <id>")

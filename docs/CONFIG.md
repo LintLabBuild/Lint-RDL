@@ -26,6 +26,7 @@ remote interface can change it.
 | `git_hosts` | `[github.com, gitlab.com, codeberg.org, bitbucket.org, git.sr.ht, gitea.com]` | Hosts whose repository links are cloned with Git |
 | `git_full_history` | `false` | `false`: shallow clone (latest commit). `true`: full history. |
 | `proxy` | `''` | rdl's own HTTP(S) proxy. System proxy settings are always ignored. |
+| `resume_mode` | `auto` | What to do when a server can't resume: `auto` (= `ratchet`), `ratchet`, `missing-only`, `restart`. See [USAGE](USAGE.md#when-the-server-cant-resume). |
 | `chunk_mb` | `8` | fsync and journal interval |
 | `stall_seconds` | `120` | Reconnect after this long without data |
 | `low_speed_bytes` / `low_speed_seconds` | `0` / `60` | Reconnect if slower than this for that long (0 = off) |

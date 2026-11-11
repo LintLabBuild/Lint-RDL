@@ -206,7 +206,14 @@ func probeHTTP(ctx context.Context, client *http.Client, u *url.URL, userAgent s
 
 	if head.StatusCode >= 400 {
 		res.Resumable = "NO"
-		res.Verdict = fmt.Sprintf("Server answered %d %s. Check the link.", head.StatusCode, http.StatusText(head.StatusCode))
+		switch head.StatusCode {
+		case http.StatusNotFound, http.StatusGone:
+			res.Verdict = fmt.Sprintf("The file doesn't exist at this link (%d): wrong link, removed, or an expired temporary link.", head.StatusCode)
+		case http.StatusUnauthorized, http.StatusForbidden:
+			res.Verdict = fmt.Sprintf("Access denied (%d): the link may have expired, or it needs a login.", head.StatusCode)
+		default:
+			res.Verdict = fmt.Sprintf("Server answered %d %s. Check the link.", head.StatusCode, http.StatusText(head.StatusCode))
+		}
 		pickName(res, head, u)
 		return res, nil
 	}

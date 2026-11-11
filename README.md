@@ -28,6 +28,7 @@ rest**, and that I can trust with a 30 GB file on a bad connection.
 |---|---|
 | **Resume that never corrupts** | Survives Wi-Fi drops, power cuts and reboots. Resumes only when the server proves the file is unchanged; otherwise it restarts and tells you why. |
 | **Knows what a link is before downloading** | The real file type, the size, whether resume will work, and what's inside: ZIP contents, model tensors, web-folder files, repository files. It warns about a `.jpg` that is really a program. |
+| **Smart resume** | Choose what happens when a server can't resume: keep and verify (ratchet), never re-download (for data plans), or all-or-nothing. Expired temporary link? `rdl relink` continues from a new one. |
 | **Verified files** | Checks the SHA-256 automatically (Hugging Face hashes are looked up for you). |
 | **Saves where you want** | Your save folders plus the folders you pinned in **File Explorer** or your **Linux file manager**. |
 | **Git links** | Paste a GitHub, GitLab or Codeberg repository link: it's cloned with your Git, if installed. |
@@ -74,7 +75,10 @@ for piracy:
 | Background service, web UI, phone access over Tailscale, sleep/shutdown when done | next |
 | Browser extension: send downloads from Chrome, Edge or Firefox to rdl | [#1](https://github.com/LintLabBuild/Lint-RDL/issues/1) |
 | Faster downloads: parallel connections, Wi-Fi + Ethernet + hotspot together, mirrors | [#2](https://github.com/LintLabBuild/Lint-RDL/issues/2) |
+| Bring your own torrent client (qBittorrent, Transmission, Deluge, aria2...) | [#4](https://github.com/LintLabBuild/Lint-RDL/issues/4) |
 | Telegram bot, AI agent tools (MCP), more chat apps | planned |
+
+Missing something? [Suggest a feature](https://github.com/LintLabBuild/Lint-RDL/issues/new/choose).
 
 ## Build
 
