@@ -34,6 +34,7 @@ rest**, and that I can trust with a 30 GB file on a bad connection.
 | **Git links** | Paste a GitHub, GitLab or Codeberg repository link: it's cloned with your Git, if installed. |
 | **Hugging Face helper** | `rdl hf <repo> <files>` fetches models with sizes and hashes. |
 | **Safe by default** | Never runs what it downloads. Never fetches from your private network. Never writes outside your chosen folders. |
+| **AI agents (MCP)** | `rdl mcp` lets Claude Code or any MCP agent download a whole model set in 3 calls (add_batch → wait → list), verified, without babysitting. [docs/MCP.md](docs/MCP.md) |
 | **Same on Windows and Linux** | One small binary with no dependencies. Keeps the PC awake while downloading. |
 
 ## Quick start
@@ -76,7 +77,8 @@ for piracy:
 | Browser extension: send downloads from Chrome, Edge or Firefox to rdl | [#1](https://github.com/LintLabBuild/Lint-RDL/issues/1) |
 | Faster downloads: parallel connections, Wi-Fi + Ethernet + hotspot together, mirrors | [#2](https://github.com/LintLabBuild/Lint-RDL/issues/2) |
 | Bring your own torrent client (qBittorrent, Transmission, Deluge, aria2...) | [#4](https://github.com/LintLabBuild/Lint-RDL/issues/4) |
-| Telegram bot, AI agent tools (MCP), more chat apps | planned |
+| AI agents via MCP (`rdl mcp`) | [#9](https://github.com/LintLabBuild/Lint-RDL/issues/9) |
+| Telegram bot, more chat apps | planned |
 
 Missing something? [Suggest a feature](https://github.com/LintLabBuild/Lint-RDL/issues/new/choose).
 
@@ -97,6 +99,7 @@ go test -race ./...
 [Config](docs/CONFIG.md) ·
 [Security model](docs/THREATS.md) ·
 [Reporting vulnerabilities](docs/SECURITY.md) ·
+[AI agents (MCP)](docs/MCP.md) ·
 [Remote access](docs/TUNNELS.md) ·
 [Writing adapters](docs/ADAPTERS.md) ·
 [Full design spec](docs/SPEC.md)

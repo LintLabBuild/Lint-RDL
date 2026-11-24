@@ -118,6 +118,8 @@ file on Windows, but not inside `.git`.
 |---|---|---|
 | One remote user controls another's jobs | Non-owners see and control only their own jobs | `TestRolesAndOwnership` |
 | An AI agent powers off the PC | Power commands are denied to `agent` unless `power.agent_can_power` is set | `TestRolesAndOwnership` |
+| An AI agent (MCP) oversteps | MCP calls run as `mcp:<client>` with the `agent` role through the same dispatcher: no power tools exposed, no config, own jobs only, unknown arguments rejected | `TestProtocolBasics`, `TestCancellationAndOwnership` |
+| `wait` leaks other users' jobs | An identity with no jobs gets "no jobs"; the engine is never asked to wait on "all jobs" for a non-owner | `TestWaitNeverLeaksOtherJobs` |
 | Command flooding | Per-identity token bucket (`CommandsPerMinute`) | `TestRateLimit` |
 | No accountability | Every state-changing command and every finished or failed download goes to the append-only audit log, with rotation | `rdl audit` |
 

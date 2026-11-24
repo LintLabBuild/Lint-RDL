@@ -108,3 +108,17 @@ func TestPolicyErrorsSurface(t *testing.T) {
 		t.Fatalf("%v", r.Message)
 	}
 }
+
+func TestWaitNeverLeaksOtherJobs(t *testing.T) {
+	d, srv := setup(t)
+	ctx := context.Background()
+	owner := Identity{ID: "cli:me", Via: "cli", Role: RoleOwner}
+	agent := Identity{ID: "mcp:a", Via: "mcp", Role: RoleAgent}
+	if r := d.Dispatch(ctx, Command{Name: "add", Args: []string{srv.FileURL()}, Identity: owner}); !r.OK {
+		t.Fatal(r.Message)
+	}
+	r := d.Dispatch(ctx, Command{Name: "wait", Flags: map[string]string{"timeout": "1s"}, Identity: agent})
+	if !r.OK || r.Message != "no jobs" || len(r.Data.([]engine.JobView)) != 0 {
+		t.Fatalf("agent with no jobs saw: %q %v", r.Message, r.Data)
+	}
+}

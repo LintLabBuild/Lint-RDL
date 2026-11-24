@@ -103,7 +103,8 @@ func openApp(needLock bool) (*app, error) {
 		name = u.Username
 	}
 	a.me = command.Identity{ID: "cli:" + name, Via: "cli", Role: command.RoleOwner}
-	a.disp = &command.Dispatcher{M: a.m, Paths: a.paths, URLs: a.urls, Disk: a.disk, Audit: a.audit, ShowFiles: true}
+	a.disp = &command.Dispatcher{M: a.m, Paths: a.paths, URLs: a.urls, Disk: a.disk, Audit: a.audit, ShowFiles: true,
+		HFToken: os.Getenv("RDL_HF_TOKEN")}
 	return a, nil
 }
 
