@@ -1,0 +1,27 @@
+name: Torrent client support
+description: Ask rdl to work with your torrent client (rdl hands torrents to your own client; see #4).
+labels: [torrent-client]
+body:
+  - type: input
+    id: client
+    attributes:
+      label: Torrent client
+      placeholder: "e.g. qBittorrent 5.0, Transmission 4, Deluge 2, aria2, rTorrent, Tixati, BiglyBT"
+    validations:
+      required: true
+  - type: input
+    id: api
+    attributes:
+      label: Remote-control API it offers (if you know)
+      placeholder: "Web API / JSON-RPC / XML-RPC / none"
+  - type: dropdown
+    id: os
+    attributes:
+      label: Your system
+      multiple: true
+      options: [Windows, Linux, macOS]
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else
+      description: Add a 👍 to an existing request instead of opening a duplicate.

@@ -1,0 +1,22 @@
+name: A link that should download but doesn't
+description: A file your browser can download, but rdl refuses or can't handle.
+labels: [site-support]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        rdl downloads anything a browser would save as a file. It is not built for piracy: streaming services
+        (YouTube, Netflix, Spotify...) and stream playlists are refused on purpose, so please don't ask for those.
+  - type: input
+    id: site
+    attributes:
+      label: Site
+      placeholder: "example.com (no private or signed links, please)"
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What does rdl say, and what does your browser do?
+    validations:
+      required: true

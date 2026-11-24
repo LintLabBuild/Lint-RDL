@@ -167,8 +167,10 @@ func TestWrongContentRangeNoCuts(t *testing.T) {
 	srv.Update(func(o *testserver.Options) { o.CutEvery = 0 })
 	v := waitDone(t, m, job.ID, 20*time.Second)
 	checkFile(t, v, content)
-	if !strings.Contains(v.Notice, "restarting") {
-		t.Fatalf("expected a restart notice, got %q", v.Notice)
+	// The server answers ranges wrongly, so rdl stops asking for them and
+	// the ratchet verifies the saved part instead of wiping it.
+	if !v.RangeBroken || !strings.Contains(v.Notice, "verified") {
+		t.Fatalf("expected ratchet verification, got notice %q", v.Notice)
 	}
 }
 

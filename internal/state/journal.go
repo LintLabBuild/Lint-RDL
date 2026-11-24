@@ -58,6 +58,15 @@ type Job struct {
 	ETag           string `json:"etag,omitempty"`
 	LastModified   string `json:"last_modified,omitempty"`
 	Resumable      bool   `json:"resumable"`
+	// ResumeMode decides what happens when the server can't resume:
+	// "" (manager default), auto, ratchet, missing-only, restart.
+	ResumeMode string `json:"resume_mode,omitempty"`
+	// RangeBroken: the server answers range requests wrongly, so rdl stops
+	// asking for ranges (and relies on the ratchet).
+	RangeBroken bool `json:"range_broken,omitempty"`
+	// VerifyPrefix: the link was replaced (relink) and the saved part has
+	// not yet been checked against the new server.
+	VerifyPrefix bool `json:"verify_prefix,omitempty"`
 
 	Written   int64  `json:"written"`              // bytes durably on disk (fsync'd)
 	HashState []byte `json:"hash_state,omitempty"` // sha256 state at Written

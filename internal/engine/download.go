@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"bytes"
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
@@ -58,9 +59,9 @@ func (m *Manager) openPart(j *state.Job) (*partFile, error) {
 	}
 	p := &partFile{f: f, h: sha256.New()}
 	w := j.Written
-	if w > st.Size() || w < 0 || !j.Resumable {
+	if w > st.Size() || w < 0 || (!j.Resumable && m.effectiveMode(j) == ModeRestart) {
 		// Part file is shorter than the journal says (lost or replaced), or
-		// resume isn't possible: start over.
+		// resume isn't possible and the mode is all-or-nothing: start over.
 		w = 0
 		j.HashState = nil
 	}
@@ -215,7 +216,30 @@ func (m *Manager) attempt(ctx context.Context, jr *jobRun) error {
 	if m.o.Authorize != nil {
 		m.o.Authorize(req)
 	}
-	ranged := p.written > 0
+	mode := m.effectiveMode(&j)
+	// Ask only for the missing bytes, unless the server is known to answer
+	// ranges wrongly or the saved part must first be checked against a new
+	// link (relink without a known SHA-256).
+	ranged := p.written > 0 && !j.RangeBroken && !j.VerifyPrefix
+	skip := int64(0)
+	if p.written > 0 && !ranged {
+		switch mode {
+		case ModeRestart:
+			if err := p.reset(); err != nil {
+				return err
+			}
+			j.Written, j.HashState = 0, nil
+			m.notice(jr, &j, "server can't resume; restarting from 0 (resume mode: restart)")
+		case ModeMissingOnly:
+			if j.VerifyPrefix {
+				return permErr("the new link must be checked against the %s already saved, which means downloading that part again. "+
+					"Continue with: rdl retry %s --resume-mode ratchet, or relink with a known --sha256", policy.HumanBytes(p.written), j.ID)
+			}
+			return missingOnlyStop(&j, p.written)
+		default:
+			skip = p.written
+		}
+	}
 	if ranged {
 		req.Header.Set("Range", "bytes="+strconv.FormatInt(p.written, 10)+"-")
 		if isStrongETag(j.ETag) {
@@ -234,11 +258,16 @@ func (m *Manager) attempt(ctx context.Context, jr *jobRun) error {
 	defer resp.Body.Close()
 	j.FinalURL = resp.Request.URL.String()
 
-	if err := m.checkStatus(jr, &j, p, resp, ranged); err != nil {
+	extraSkip, err := m.checkStatus(jr, &j, p, resp, ranged, skip > 0)
+	if err == nil {
+		skip = extraSkip
+	}
+	if err != nil {
 		if ae, ok := err.(*attemptError); ok && ae.reset {
 			j.Written, j.HashState = 0, nil
-			m.commit(jr, &j)
 		}
+		// Save what was learned about the server (e.g. RangeBroken).
+		m.commit(jr, &j)
 		if errors.Is(err, errAlreadyComplete) {
 			return m.finish(jr, &j, p)
 		}
@@ -261,7 +290,11 @@ func (m *Manager) attempt(ctx context.Context, jr *jobRun) error {
 	if err := m.commit(jr, &j); err != nil {
 		return err
 	}
-	if err := m.stream(ctx, jr, &j, p, body); err != nil {
+	if skip > 0 {
+		m.notice(jr, &j, fmt.Sprintf("server can't resume: re-reading the %s already saved (not written again) to verify it, then continuing",
+			policy.HumanBytes(skip)))
+	}
+	if err := m.stream(ctx, jr, &j, p, body, skip); err != nil {
 		return err
 	}
 	return m.finish(jr, &j, p)
@@ -270,8 +303,11 @@ func (m *Manager) attempt(ctx context.Context, jr *jobRun) error {
 var errAlreadyComplete = errors.New("already complete")
 
 // checkStatus validates the response and adjusts the part file. On return
-// without error, the body should be appended at p.written.
-func (m *Manager) checkStatus(jr *jobRun, j *state.Job, p *partFile, resp *http.Response, ranged bool) error {
+// without error, the body (after skipping the returned number of bytes)
+// is appended at p.written. planned is true when the request was sent
+// without a range on purpose because the caller plans to skip.
+func (m *Manager) checkStatus(jr *jobRun, j *state.Job, p *partFile, resp *http.Response, ranged, planned bool) (int64, error) {
+	mode := m.effectiveMode(j)
 	h := resp.Header
 	newETag, newLM := h.Get("ETag"), h.Get("Last-Modified")
 	changed := func() bool {
@@ -291,61 +327,95 @@ func (m *Manager) checkStatus(jr *jobRun, j *state.Job, p *partFile, resp *http.
 		m.notice(jr, j, msg)
 		return &attemptError{kind: kindRestart, err: errors.New(msg), reset: true}
 	}
+	// brokenRange: the server answers ranges wrongly. Stop asking for them.
+	// Restart mode wipes; the other modes keep the part and retry without a
+	// range (ratchet) or stop (missing-only).
+	brokenRange := func(msg string) error {
+		j.RangeBroken = true
+		if mode == ModeRestart {
+			j.Resumable = false
+			return restart(msg + "; restarting from 0")
+		}
+		m.notice(jr, j, msg+"; will stop asking for ranges")
+		if mode == ModeMissingOnly {
+			return missingOnlyStop(j, p.written)
+		}
+		return &attemptError{kind: kindRestart, err: errors.New(msg)}
+	}
 
 	switch code := resp.StatusCode; {
 	case code == http.StatusOK:
-		if ranged {
-			msg := "server ignored the range request; restarting from 0"
-			if changed() {
-				msg = "file changed on server; restarting from 0"
+		var skip int64
+		if ranged || planned {
+			switch {
+			case changed():
+				if err := p.reset(); err != nil {
+					return 0, err
+				}
+				j.Written, j.HashState = 0, nil
+				m.notice(jr, j, "file changed on server; restarting from 0")
+			case mode == ModeRestart:
+				if err := p.reset(); err != nil {
+					return 0, err
+				}
+				j.Written, j.HashState = 0, nil
+				m.notice(jr, j, "server ignored the range request; restarting from 0 (resume mode: restart)")
+			case mode == ModeMissingOnly:
+				return 0, missingOnlyStop(j, p.written)
+			default:
+				skip = p.written
 			}
-			if err := p.reset(); err != nil {
-				return err
-			}
-			m.notice(jr, j, msg)
 		}
 		if err := m.acceptHeaders(j, resp); err != nil {
-			return err
+			return 0, err
 		}
 		if resp.ContentLength >= 0 && h.Get("Content-Encoding") == "" {
 			if j.ExpectedSize >= 0 && resp.ContentLength != j.ExpectedSize {
-				return permErr("size mismatch: server says %d bytes, expected %d", resp.ContentLength, j.ExpectedSize)
+				if skip > 0 && j.ExpectedSHA256 == "" {
+					// Different size: a different file. Start over.
+					if err := p.reset(); err != nil {
+						return 0, err
+					}
+					j.Written, j.HashState = 0, nil
+					skip = 0
+					m.notice(jr, j, "file changed on server (new size); restarting from 0")
+				} else {
+					return 0, permErr("size mismatch: server says %d bytes, expected %d", resp.ContentLength, j.ExpectedSize)
+				}
 			}
 			j.ExpectedSize = resp.ContentLength
 		}
-		j.Resumable = resp.ContentLength >= 0
+		if p.written == 0 {
+			j.Resumable = resp.ContentLength >= 0
+		}
 		j.ETag, j.LastModified = newETag, newLM
 		if j.ETag == "" && j.LastModified == "" {
 			m.notice(jr, j, "server sends no ETag or Last-Modified; resume relies on the size and the final SHA-256")
 		}
-		return nil
+		return skip, nil
 
 	case code == http.StatusPartialContent:
 		if strings.HasPrefix(h.Get("Content-Type"), "multipart/byteranges") {
-			j.Resumable = false
-			return restart("server sent a multipart range reply (not supported); restarting without ranges")
+			return 0, brokenRange("server sent a multipart range reply (not supported)")
 		}
 		if enc := h.Get("Content-Encoding"); enc != "" && !strings.EqualFold(enc, "identity") {
-			j.Resumable = false
-			return restart("server compresses ranged replies; restarting without resume")
+			return 0, brokenRange("server compresses ranged replies")
 		}
 		cr, err := parseContentRange(h.Get("Content-Range"))
 		if err != nil || cr.Unsat {
-			j.Resumable = false
-			return restart("server sent a broken Content-Range; restarting from 0")
+			return 0, brokenRange("server sent a broken Content-Range")
 		}
 		if cr.Start != p.written {
-			j.Resumable = false
-			return restart(fmt.Sprintf("server sent bytes from %d, asked for %d; restarting from 0", cr.Start, p.written))
+			return 0, brokenRange(fmt.Sprintf("server sent bytes from %d, asked for %d", cr.Start, p.written))
 		}
 		if changed() || (j.ExpectedSize >= 0 && cr.Total >= 0 && cr.Total != j.ExpectedSize) {
-			return restart("file changed on server; restarting from 0")
+			return 0, restart("file changed on server; restarting from 0")
 		}
 		if !ranged {
-			return retryErr("server sent a partial reply to a full request")
+			return 0, retryErr("server sent a partial reply to a full request")
 		}
 		if err := m.acceptHeaders(j, resp); err != nil {
-			return err
+			return 0, err
 		}
 		if cr.Total >= 0 && j.ExpectedSize < 0 {
 			j.ExpectedSize = cr.Total
@@ -356,7 +426,7 @@ func (m *Manager) checkStatus(jr *jobRun, j *state.Job, p *partFile, resp *http.
 		if newLM != "" {
 			j.LastModified = newLM
 		}
-		return nil
+		return 0, nil
 
 	case code == http.StatusRequestedRangeNotSatisfiable:
 		cr, _ := parseContentRange(h.Get("Content-Range"))
@@ -365,26 +435,33 @@ func (m *Manager) checkStatus(jr *jobRun, j *state.Job, p *partFile, resp *http.
 			total = j.ExpectedSize
 		}
 		if total >= 0 && total == p.written && !changed() {
-			return errAlreadyComplete
+			return 0, errAlreadyComplete
 		}
-		return restart("server says the range is invalid (file shrank or changed); restarting from 0")
+		return 0, restart("server says the range is invalid (file shrank or changed); restarting from 0")
 
 	case code == http.StatusTooManyRequests || code == http.StatusServiceUnavailable:
 		w := parseRetryAfter(h.Get("Retry-After"), time.Now())
-		return &attemptError{kind: kindRetry, wait: w, err: fmt.Errorf("server busy (%d)", code)}
+		return 0, &attemptError{kind: kindRetry, wait: w, err: fmt.Errorf("server busy (%d)", code)}
 
-	case code == http.StatusUnauthorized || code == http.StatusForbidden || code == http.StatusGone:
-		return &attemptError{kind: kindRetry, auth: true,
-			err: fmt.Errorf("access denied (%d); if this was a signed link it expired, re-requesting the original URL", code)}
+	case code == http.StatusUnauthorized || code == http.StatusForbidden:
+		msg := fmt.Sprintf("access denied (%d); if this was a signed link it expired, re-requesting the original URL", code)
+		if p.written > 0 {
+			msg += fmt.Sprintf(". If it keeps failing, give a new link with: rdl relink %s <url> (the %s already saved is kept)", j.ID, policy.HumanBytes(p.written))
+		}
+		return 0, &attemptError{kind: kindRetry, auth: true, err: errors.New(msg)}
 
-	case code == http.StatusNotFound:
-		return permErr("not found (404)")
+	case code == http.StatusNotFound || code == http.StatusGone:
+		if p.written > 0 {
+			return 0, permErr("the file is no longer at this link (%d): an expired temporary link, or it was removed. "+
+				"The %s already saved is kept; continue with a new link: rdl relink %s <url>", code, policy.HumanBytes(p.written), j.ID)
+		}
+		return 0, permErr("the file doesn't exist at this link (%d): wrong link, removed, or an expired temporary link", code)
 
 	case code == http.StatusRequestTimeout || code >= 500:
-		return retryErr("server error %d", code)
+		return 0, retryErr("server error %d", code)
 
 	default:
-		return permErr("server answered %d %s", code, http.StatusText(code))
+		return 0, permErr("server answered %d %s", code, http.StatusText(code))
 	}
 }
 
@@ -413,7 +490,17 @@ func (m *Manager) acceptHeaders(j *state.Job, resp *http.Response) error {
 
 // stream copies body to the part file with checkpoints, stall detection,
 // speed limiting and disk checks.
-func (m *Manager) stream(ctx context.Context, jr *jobRun, j *state.Job, p *partFile, body io.Reader) error {
+//
+// If skip > 0 (ratchet), the first skip bytes are the part already saved:
+// they are hashed in memory, not written, and compared with the saved
+// hash state at the boundary. A mismatch means the file changed.
+func (m *Manager) stream(ctx context.Context, jr *jobRun, j *state.Job, p *partFile, body io.Reader, skip int64) error {
+	var want []byte
+	skipH := sha256.New()
+	if skip > 0 {
+		want = p.h.Sum(nil) // digest of the saved part (state is not modified)
+	}
+	skipLeft := skip
 	// Stall watchdog: if no bytes arrive for StallTimeout, cancel the request.
 	sctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -447,6 +534,33 @@ func (m *Manager) stream(ctx context.Context, jr *jobRun, j *state.Job, p *partF
 
 	for {
 		n, rerr := body.Read(buf)
+		data := buf[:n]
+		if n > 0 && skipLeft > 0 {
+			timer.Reset(m.o.StallTimeout)
+			if err := m.limiter.wait(sctx, n); err != nil {
+				break
+			}
+			k := min(int64(n), skipLeft)
+			skipH.Write(data[:k])
+			skipLeft -= k
+			winBytes += k
+			jr.catchup.Store(skip - skipLeft)
+			data = data[k:]
+			if skipLeft == 0 {
+				jr.catchup.Store(0)
+				if !bytes.Equal(skipH.Sum(nil), want) {
+					p.reset()
+					j.Written, j.HashState = 0, nil
+					m.commit(jr, j)
+					m.notice(jr, j, "file changed on server (the part already saved doesn't match); restarting from 0")
+					return &attemptError{kind: kindRestart, err: errors.New("file changed on server"), reset: true}
+				}
+				j.VerifyPrefix = false
+				m.notice(jr, j, fmt.Sprintf("verified the %s already saved; continuing", policy.HumanBytes(skip)))
+				m.commit(jr, j)
+			}
+		}
+		n = len(data)
 		if n > 0 {
 			timer.Reset(m.o.StallTimeout)
 			if j.ExpectedSize >= 0 && p.written+int64(n) > j.ExpectedSize {
@@ -455,17 +569,19 @@ func (m *Manager) stream(ctx context.Context, jr *jobRun, j *state.Job, p *partF
 				m.commit(jr, j)
 				return retryErr("server sent more data than expected; restarting")
 			}
-			if err := m.limiter.wait(sctx, n); err != nil {
-				break
+			if skip == 0 {
+				if err := m.limiter.wait(sctx, n); err != nil {
+					break
+				}
 			}
-			if _, werr := p.f.Write(buf[:n]); werr != nil {
+			if _, werr := p.f.Write(data); werr != nil {
 				p.rollback(lastHS)
 				if isDiskFull(werr) {
 					return &attemptError{kind: kindDisk, err: fmt.Errorf("%w: disk full while writing", policy.ErrDiskSpace)}
 				}
 				return retryErr("write: %v", werr)
 			}
-			p.h.Write(buf[:n])
+			p.h.Write(data)
 			p.written += int64(n)
 			sinceCheck += int64(n)
 			sinceDisk += int64(n)
@@ -533,6 +649,15 @@ func (m *Manager) stream(ctx context.Context, jr *jobRun, j *state.Job, p *partF
 	}
 	if isStalled() {
 		return retryErr("no data for %s; reconnecting", m.o.StallTimeout)
+	}
+	if skipLeft > 0 {
+		// The server's whole file is shorter than the part we already have.
+		jr.catchup.Store(0)
+		p.reset()
+		j.Written, j.HashState = 0, nil
+		m.commit(jr, j)
+		m.notice(jr, j, "file changed on server (it is now shorter than the part already saved); restarting from 0")
+		return &attemptError{kind: kindRestart, err: errors.New("file changed on server"), reset: true}
 	}
 	if j.ExpectedSize >= 0 && p.written < j.ExpectedSize {
 		return retryErr("connection closed early at %s of %s", policy.HumanBytes(p.written), policy.HumanBytes(j.ExpectedSize))

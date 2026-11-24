@@ -47,6 +47,9 @@ type Options struct {
 	RetryAfterCap   time.Duration // default 1 h
 	MaxAuthRetries  int           // consecutive 401/403/410 before failing, default 5
 	MaxAttempts     int           // 0 = retry forever
+	// ResumeMode is the default for jobs that don't set one: auto,
+	// ratchet, missing-only or restart (see resume.go).
+	ResumeMode      string
 	DiskPollEvery   time.Duration // how often paused-disk jobs re-check, default 30 s
 	RenameRetries   int           // default 10
 	BlockExtensions string        // off | warn | block
@@ -92,6 +95,9 @@ type JobView struct {
 	Speed      float64   `json:"speed"`         // bytes/s
 	ETA        float64   `json:"eta,omitempty"` // seconds
 	NextRetry  time.Time `json:"next_retry,omitempty"`
+	// CatchingUp > 0 while the ratchet re-reads (and verifies) the part
+	// already saved, without writing it.
+	CatchingUp int64 `json:"catching_up,omitempty"`
 }
 
 // Progress returns 0..1, or -1 if the size is unknown.
@@ -105,6 +111,7 @@ func (v JobView) Progress() float64 {
 type jobRun struct {
 	job       *state.Job
 	written   atomic.Int64
+	catchup   atomic.Int64 // ratchet: bytes re-read so far (not written)
 	speed     float64
 	nextRetry time.Time
 	running   bool
@@ -311,6 +318,7 @@ type AddRequest struct {
 	AllowDuplicate bool
 	Owner          string
 	Via            string
+	ResumeMode     string // optional per-job resume mode
 }
 
 // Add validates and queues a download. Policy checks happen here and
@@ -362,9 +370,15 @@ func (m *Manager) Add(r AddRequest) (*state.Job, error) {
 			return nil, err
 		}
 	}
+	if r.ResumeMode != "" {
+		if err := ValidResumeMode(r.ResumeMode); err != nil {
+			return nil, err
+		}
+	}
 	now := time.Now().UTC()
 	job := &state.Job{
-		ID: id, URL: u.String(), Dir: dir, Name: name, NameFixed: fixed,
+		ResumeMode: r.ResumeMode,
+		ID:         id, URL: u.String(), Dir: dir, Name: name, NameFixed: fixed,
 		Owner: r.Owner, Via: r.Via, CreatedAt: now, UpdatedAt: now,
 		ExpectedSize: size, ExpectedSHA256: sha, State: state.StateQueued, Resumable: true,
 	}
@@ -429,7 +443,7 @@ func (m *Manager) notifyLocked() {
 }
 
 func (m *Manager) viewLocked(jr *jobRun) JobView {
-	v := JobView{Job: *jr.job, Downloaded: jr.written.Load(), Speed: jr.speed, NextRetry: jr.nextRetry}
+	v := JobView{Job: *jr.job, Downloaded: jr.written.Load(), Speed: jr.speed, NextRetry: jr.nextRetry, CatchingUp: jr.catchup.Load()}
 	v.HashState = nil
 	if v.Speed > 0 && v.ExpectedSize > 0 && v.Downloaded < v.ExpectedSize {
 		v.ETA = float64(v.ExpectedSize-v.Downloaded) / v.Speed
@@ -570,8 +584,11 @@ func (m *Manager) Retry(id string) error {
 	if !ok {
 		return ErrNotFound
 	}
-	if jr.job.State != state.StateFailed && jr.job.State != state.StatePaused {
+	if jr.job.State != state.StateFailed && jr.job.State != state.StatePaused && jr.job.State != state.StateQueued {
 		return fmt.Errorf("job %s is %s", id, jr.job.State)
+	}
+	if jr.running {
+		return nil
 	}
 	jr.job.State = state.StateQueued
 	jr.job.Attempts = 0

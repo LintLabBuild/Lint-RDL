@@ -81,6 +81,7 @@ func openApp(needLock bool) (*app, error) {
 		GitPath:         gitdl.LookPath(),
 		GitHosts:        cfg.GitHosts,
 		GitFullHistory:  cfg.GitFullHistory,
+		ResumeMode:      cfg.ResumeMode,
 		OnEvent: func(ev engine.Event) {
 			if a.onEvent != nil {
 				a.onEvent(ev)

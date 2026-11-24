@@ -38,6 +38,7 @@ type Config struct {
 	FavoriteFolders bool // use folders pinned in Explorer / file manager as save folders
 	GitHosts        []string
 	GitFullHistory  bool
+	ResumeMode      string // auto | ratchet | missing-only | restart
 	Proxy           string
 	AllowOverwrite  bool // reserved; never used by phase 1
 
@@ -82,6 +83,7 @@ func Default() *Config {
 		SpeedLimit:       "off",
 		BlockExtensions:  "warn",
 		FavoriteFolders:  true,
+		ResumeMode:       "auto",
 		GitHosts:         []string{"github.com", "gitlab.com", "codeberg.org", "bitbucket.org", "git.sr.ht", "gitea.com"},
 		ChunkMB:          8,
 		StallSeconds:     120,
@@ -252,6 +254,8 @@ func (c *Config) set(key string, v *yamlValue) error {
 		c.DefaultRoot, err = wantScalar(v)
 	case "speed_limit":
 		c.SpeedLimit, err = wantScalar(v)
+	case "resume_mode":
+		c.ResumeMode, err = wantScalar(v)
 	case "block_extensions":
 		c.BlockExtensions, err = wantScalar(v)
 	case "proxy":
@@ -351,6 +355,11 @@ func (c *Config) Validate() error {
 	case "off", "warn", "block":
 	default:
 		return fmt.Errorf("block_extensions must be off, warn or block")
+	}
+	switch c.ResumeMode {
+	case "auto", "ratchet", "missing-only", "restart":
+	default:
+		return fmt.Errorf("resume_mode must be auto, ratchet, missing-only or restart")
 	}
 	if c.MaxParallelJobs < 1 || c.MaxParallelJobs > 32 {
 		return fmt.Errorf("max_parallel_jobs must be 1..32")
@@ -528,6 +537,8 @@ func (c *Config) Render() string {
 	kv("speed_limit", quoteYAML(c.SpeedLimit))
 	kv("browse_show_files", strconv.FormatBool(c.BrowseShowFiles))
 	kv("block_extensions", quoteYAML(c.BlockExtensions))
+	b.WriteString("# When a server can't resume: auto | ratchet (keep + verify the saved part) | missing-only (never re-download; stop) | restart (all or nothing)\n")
+	kv("resume_mode", quoteYAML(c.ResumeMode))
 	list("allow_private", c.AllowPrivate, "Private addresses allowed as download sources. Only editable at the PC.")
 	list("domain_allowlist", c.DomainAllowlist, "Empty = any public domain.")
 	list("blocked_sites", c.BlockedSites, "Extra sites to refuse. Streaming sites (YouTube, Netflix, Spotify...) are always refused.")

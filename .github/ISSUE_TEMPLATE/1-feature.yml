@@ -1,0 +1,26 @@
+name: Suggest a feature
+description: Something a download manager should do, but rdl (or any other) doesn't.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: The situation, not the solution. "I download 30 GB of models on a flaky connection and..."
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like rdl to do?
+  - type: textarea
+    id: others
+    attributes:
+      label: Does another tool do this already?
+      description: Name the tool and how it works there, if you know.
+  - type: dropdown
+    id: os
+    attributes:
+      label: Your system
+      multiple: true
+      options: [Windows, Linux, macOS]
