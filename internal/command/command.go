@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/lintlabbuild/lint-rdl/internal/engine"
+	"github.com/lintlabbuild/lint-rdl/internal/hf"
 	"github.com/lintlabbuild/lint-rdl/internal/policy"
 	"github.com/lintlabbuild/lint-rdl/internal/state"
 )
@@ -86,6 +87,8 @@ type Dispatcher struct {
 	Audit     *state.Audit
 	ShowFiles bool
 	Limits    Limits
+	// HFToken is sent to huggingface.co only (gated models). Optional.
+	HFToken string
 
 	mu      sync.Mutex
 	buckets map[string]*bucket
@@ -265,6 +268,11 @@ func (d *Dispatcher) run(ctx context.Context, name string, c Command) Result {
 				}
 			}
 		}
+		if len(ids) == 0 {
+			// Never call Manager.Wait without ids: it would wait on (and
+			// return) every job, including other users'.
+			return Result{OK: true, Message: "no jobs", Data: []engine.JobView{}}
+		}
 		for _, id := range ids {
 			j, err := d.M.Get(id)
 			if err != nil {
@@ -394,8 +402,33 @@ func (d *Dispatcher) run(ctx context.Context, name string, c Command) Result {
 	case "limit":
 		return fail(errors.New("change speed_limit with `rdl config set speed_limit <value>` at the PC (live limit arrives with the daemon)"))
 
-	case "hf", "add-batch":
-		return fail(fmt.Errorf("%s: use the CLI for now (adapters get it with the daemon)", name))
+	case "hf":
+		if err := needArgs(c, 2, "hf <owner/repo> <path>... [--rev r] [--to folder]"); err != nil {
+			return fail(err)
+		}
+		files, err := hf.Lookup(ctx, d.M.Client(), c.Args[0], c.Flag("rev"), c.Args[1:], d.HFToken)
+		if err != nil {
+			return fail(err)
+		}
+		var jobs []*state.Job
+		var errs []string
+		for _, f := range files {
+			job, err := d.M.Add(engine.AddRequest{URL: f.URL, Dir: c.Flag("to"), SHA256: f.SHA256, ExpectedSize: f.Size,
+				Owner: c.Identity.ID, Via: c.Identity.Via, ResumeMode: c.Flag("resume-mode")})
+			if err != nil {
+				errs = append(errs, f.Path+": "+err.Error())
+				continue
+			}
+			jobs = append(jobs, job)
+		}
+		msg := fmt.Sprintf("queued %d of %d files", len(jobs), len(files))
+		if len(errs) > 0 {
+			msg += "; " + strings.Join(errs, "; ")
+		}
+		return Result{OK: len(errs) == 0, Message: msg, Data: jobs}
+
+	case "add-batch":
+		return fail(errors.New("add-batch: send one add per item (adapters batch on their side)"))
 
 	case "when-done", "power", "cancel-power":
 		return fail(errors.New("power actions arrive with the daemon (phase 2)"))

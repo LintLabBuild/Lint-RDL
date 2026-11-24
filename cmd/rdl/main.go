@@ -49,6 +49,10 @@ Downloads:
 Folders:
   rdl folders | ls [path] | mkdir <name> [--in folder] | disk
 
+AI agents:
+  rdl mcp                               MCP server over stdio (started by your agent)
+  rdl mcp --print-config                config snippet for Claude Code / Claude Desktop
+
 At the PC only (config):
   rdl setup                             first-time setup
   rdl config [show|path|set <key> <value>]
@@ -116,7 +120,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 		err = cmdAudit(rest, stdout)
 	case "limit":
 		err = cmdLimit(rest, stdout)
-	case "when-done", "power", "cancel-power", "pair", "unpair", "daemon", "mcp":
+	case "mcp":
+		err = cmdMCP(rest, stdout, stderr)
+	case "when-done", "power", "cancel-power", "pair", "unpair", "daemon":
 		err = fmt.Errorf("%s arrives in a later phase (see docs/USAGE.md)", cmd)
 	default:
 		fmt.Fprintf(stderr, "unknown command %q\n\n%s", cmd, usage)

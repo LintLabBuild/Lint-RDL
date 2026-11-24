@@ -80,6 +80,11 @@ suggests `rdl relink <id> <new-url>`:
 | `rdl mkdir <name> [--in path]` | Creates a folder inside a save folder |
 | `rdl disk` | Shows free space per save folder |
 
+## AI agents
+
+`rdl mcp` is an MCP server for AI agents; `rdl mcp --print-config` prints the
+setup snippet. See [MCP.md](MCP.md).
+
 ## At the PC only
 
 | Command | |
