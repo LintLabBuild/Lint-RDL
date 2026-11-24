@@ -22,6 +22,7 @@ The cloud sandbox can't do the next steps:
 |---|---|
 | `main` | Phase 1 core + favorites + Git links + link inspection + site policy + README |
 | **PR #5** `feature/resume-modes` | Resume modes (ratchet / missing-only / restart), `rdl relink`, issue templates. **Open: review, check CI, merge.** Closes #3. |
+| **PR #10** `feature/mcp` (stacked on #5) | `rdl mcp`, the MCP server for AI agents (16 tools), and a fix for `wait` leaking other users' jobs. **Merge after #5.** Closes #9. Then try it with a real Claude Code: `claude mcp add rdl -- /path/to/rdl mcp` (see `docs/MCP.md`). |
 | Old branch `claude/rdl-download-manager-spec-mtqr3w` | Same as `main` at the time; delete it once the repo default branch is `main` |
 | Issues | #1 extension · #2 multi-network · #4 torrents (bring your own client) · #6 smart destinations · #7 editions (core vs desktop) · **#8 ideas & roadmap (start here, pin it)** |
 
